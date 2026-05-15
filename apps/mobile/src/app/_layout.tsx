@@ -208,9 +208,10 @@ function TabLayout() {
 
 const hotUpdaterBaseUrl = process.env.EXPO_PUBLIC_HOT_UPDATER_BASE_URL?.trim();
 
-export default hotUpdaterBaseUrl
-  ? HotUpdater.wrap({
-      baseURL: hotUpdaterBaseUrl,
-      updateMode: "manual",
-    })(TabLayout)
-  : TabLayout;
+if (hotUpdaterBaseUrl) {
+  HotUpdater.init({
+    baseURL: hotUpdaterBaseUrl,
+  });
+}
+
+export default TabLayout;
