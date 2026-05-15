@@ -38,7 +38,7 @@ run.
   <img src="./docs/readme-assets/chat.png" alt="Codex Relay chat screen" width="23%" />
   <img src="./docs/readme-assets/workspace-preview.png" alt="Codex Relay workspace preview screen" width="23%" />
   <img src="./docs/readme-assets/web-preview.png" alt="Codex Relay web preview screen" width="23%" />
-  <img src="./docs/readme-assets/threads.png" alt="Codex Relay thread list screen" width="23%" />
+  <img src="./docs/readme-assets/settings.png" alt="Codex Relay settings screen" width="23%" />
 </p>
 
 ## What It Does
