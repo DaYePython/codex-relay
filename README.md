@@ -1,7 +1,7 @@
 # Codex Relay
 
 <p align="center">
-  <img src="./apps/mobile/assets/images/icon.png" alt="Codex Relay app icon" width="96" />
+  <img src="./docs/readme-assets/icon.png" alt="Codex Relay app icon" width="96" />
 </p>
 
 <p align="center">
@@ -9,7 +9,18 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.apple.com/kr/app/codex-relay/id6764463488">
+    <img
+      alt="Download on the App Store"
+      src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en?size=250x83"
+      height="40"
+    />
+  </a>
+</p>
+
+<p align="center">
   <a href="https://www.npmjs.com/package/codex-relay"><img alt="npm" src="https://img.shields.io/npm/v/codex-relay?style=flat-square"></a>
+  <a href="https://apps.apple.com/kr/app/codex-relay/id6764463488"><img alt="App Store" src="https://img.shields.io/badge/App%20Store-Codex%20Relay-111111?style=flat-square"></a>
   <img alt="Node.js" src="https://img.shields.io/badge/node-%3E%3D22.14-111111?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-111111?style=flat-square">
   <img alt="Local first" src="https://img.shields.io/badge/local--first-yes-111111?style=flat-square">
@@ -22,6 +33,13 @@ lets you follow or steer Codex sessions from your phone.
 The project is intentionally local-first. Your code, shell, git state, and
 Codex CLI session stay on your computer; the phone talks to the relay that you
 run.
+
+<p align="center">
+  <img src="./docs/readme-assets/chat.png" alt="Codex Relay chat screen" width="23%" />
+  <img src="./docs/readme-assets/workspace-preview.png" alt="Codex Relay workspace preview screen" width="23%" />
+  <img src="./docs/readme-assets/web-preview.png" alt="Codex Relay web preview screen" width="23%" />
+  <img src="./docs/readme-assets/threads.png" alt="Codex Relay thread list screen" width="23%" />
+</p>
 
 ## What It Does
 
@@ -38,7 +56,7 @@ run.
 
 - Node.js 22.14 or newer
 - Codex CLI installed and signed in
-- Codex Relay on your phone
+- [Codex Relay on your phone](https://apps.apple.com/kr/app/codex-relay/id6764463488)
 - A network path from your phone to your computer
 
 ### 1. Start the relay
