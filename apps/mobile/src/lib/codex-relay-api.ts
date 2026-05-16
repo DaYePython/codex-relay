@@ -99,6 +99,7 @@ const clientTokenStorageKey = "codex-relay.client-token";
 const clientTokenRefreshLeewayMs = 24 * 60 * 60 * 1000;
 const pairingConnectTimeoutMs = 2500;
 const streamRequestTimeoutMs = 10 * 60 * 1000;
+const terminalStreamRequestTimeoutMs = 24 * 60 * 60 * 1000;
 const serverUrlStorageKey = "codex-relay.server-url";
 const storage = createMMKV({ id: "codex-relay" });
 
@@ -715,42 +716,184 @@ export async function readWorkspaceTerminalOutput(
   );
 }
 
+export function streamWorkspaceTerminalOutput(
+  sessionId: string,
+  since: number,
+  handlers: {
+    onOutput: (response: WorkspaceTerminalOutputResponse) => void;
+    onError: (error: Error) => void;
+  },
+) {
+  const requestUrl =
+    `${getCodexRelayServerUrl()}${apiPaths.workspaceTerminalOutputStream(sessionId)}` +
+    `?since=${encodeURIComponent(String(since))}`;
+  let closed = false;
+  const dispatcher = createTerminalOutputSseDispatcher(handlers);
+
+  function fail(error: Error) {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    handlers.onError(error);
+  }
+
+  dfetchStream(
+    requestUrl,
+    {
+      method: "GET",
+      headers: streamRequestHeaders({ jsonContentType: false }),
+      timeoutMs: terminalStreamRequestTimeoutMs,
+    },
+    (text) => {
+      if (closed || !dispatcher.push(text)) {
+        closed = true;
+      }
+    },
+  )
+    .then((response) => {
+      if (closed) {
+        return;
+      }
+      if (!response.ok) {
+        if (isSessionInvalidStatus(response.status)) {
+          clearClientSession();
+        }
+        void response.text().then((text) => {
+          let payload: unknown = text;
+          try {
+            payload = decryptResponsePayload(JSON.parse(text));
+          } catch {}
+          fail(new Error(errorMessage(payload, `Codex Relay server returned ${response.status}`)));
+        });
+        return;
+      }
+      if (!dispatcher.flush()) {
+        closed = true;
+      }
+    })
+    .catch((error: unknown) => {
+      fail(new Error(errorMessage(error, "Codex Relay terminal stream failed.")));
+    });
+
+  return () => {
+    closed = true;
+  };
+}
+
+function createTerminalOutputSseDispatcher(handlers: {
+  onOutput: (response: WorkspaceTerminalOutputResponse) => void;
+  onError: (error: Error) => void;
+}) {
+  let pendingChunk = "";
+  let closed = false;
+
+  return {
+    push(text: string) {
+      if (closed) {
+        return false;
+      }
+      pendingChunk += text;
+      const parts = pendingChunk.split(/\r?\n\r?\n/);
+      pendingChunk = parts.pop() ?? "";
+      for (const part of parts) {
+        if (!dispatchTerminalOutputSseChunk(part, handlers)) {
+          closed = true;
+          return false;
+        }
+      }
+      return true;
+    },
+    flush() {
+      if (closed) {
+        return false;
+      }
+      if (pendingChunk.trim() && !dispatchTerminalOutputSseChunk(pendingChunk, handlers)) {
+        closed = true;
+        return false;
+      }
+      pendingChunk = "";
+      return true;
+    },
+  };
+}
+
+function dispatchTerminalOutputSseChunk(
+  chunk: string,
+  handlers: {
+    onOutput: (response: WorkspaceTerminalOutputResponse) => void;
+    onError: (error: Error) => void;
+  },
+) {
+  const data = chunk
+    .split(/\r?\n/)
+    .reduce<string[]>((lines, line) => {
+      if (line.startsWith("data:")) {
+        lines.push(line.slice("data:".length).trimStart());
+      }
+      return lines;
+    }, [])
+    .join("\n");
+  if (!data) {
+    return true;
+  }
+
+  try {
+    const payload = decryptResponsePayload(JSON.parse(data));
+    handlers.onOutput(WorkspaceTerminalOutputResponseSchema.parse(payload));
+    return true;
+  } catch {
+    handlers.onError(new Error("Codex Relay server returned invalid terminal output."));
+    return false;
+  }
+}
+
 export async function writeWorkspaceTerminalInput(sessionId: string, data: string) {
   if (!data) {
     return { ok: true };
   }
-  return request(
-    apiPaths.workspaceTerminalInput(sessionId),
-    {
-      method: "POST",
-      body: encryptRequestPayload({ data, input: data }),
-    },
-    (payload) => payload as { ok: boolean },
-  );
+  await requestNoContent(apiPaths.workspaceTerminalInput(sessionId), {
+    method: "POST",
+    body: encryptRequestPayload({ data, input: data }),
+  });
+  return { ok: true };
 }
 
 export async function resizeWorkspaceTerminalSession(
   sessionId: string,
   size: { cols: number; rows: number },
 ) {
-  return request(
-    apiPaths.workspaceTerminalResize(sessionId),
-    {
-      method: "POST",
-      body: encryptRequestPayload(size),
-    },
-    (payload) => payload as { ok: boolean },
-  );
+  await requestNoContent(apiPaths.workspaceTerminalResize(sessionId), {
+    method: "POST",
+    body: encryptRequestPayload(size),
+  });
+  return { ok: true };
 }
 
 export async function closeWorkspaceTerminalSession(sessionId: string) {
-  return request(
-    apiPaths.workspaceTerminalSession(sessionId),
-    {
-      method: "DELETE",
-    },
-    (payload) => payload as { ok: boolean },
-  );
+  await requestNoContent(apiPaths.workspaceTerminalSession(sessionId), {
+    method: "DELETE",
+  });
+  return { ok: true };
+}
+
+async function requestNoContent(path: string, init: RequestInit) {
+  const headers = requestHeaders(init.headers);
+  const serverRequestUrl = `${getCodexRelayServerUrl()}${path}`;
+  const response = await fetchWithNetworkContext(serverRequestUrl, {
+    ...init,
+    headers,
+  });
+  if (response.ok) {
+    return;
+  }
+
+  const payload = decryptResponsePayload(await response.json().catch(() => undefined));
+  if (isSessionInvalidStatus(response.status)) {
+    clearClientSession();
+  }
+  const message = errorMessage(payload, `Codex Relay server returned ${response.status}`);
+  throw new CodexRelayApiError(message, response.status, errorCode(payload));
 }
 
 export async function getRateLimits(): Promise<RateLimitsResponse> {
@@ -926,11 +1069,13 @@ function streamThreadRunWithDirectFetch(
   };
 }
 
-function streamRequestHeaders() {
+function streamRequestHeaders(options: { jsonContentType?: boolean } = {}) {
   const headers = new Headers({
     accept: "text/event-stream",
-    "content-type": "application/json",
   });
+  if (options.jsonContentType !== false) {
+    headers.set("content-type", "application/json");
+  }
   const authorization = authorizationHeader().authorization;
   if (authorization) {
     headers.set("authorization", authorization);

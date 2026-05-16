@@ -976,6 +976,8 @@ export const apiPaths = {
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/input`,
   workspaceTerminalOutput: (sessionId: string) =>
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/output`,
+  workspaceTerminalOutputStream: (sessionId: string) =>
+    `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/output/stream`,
   workspaceTerminalResize: (sessionId: string) =>
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/resize`,
   imageAttachments: "/v1/attachments/images",

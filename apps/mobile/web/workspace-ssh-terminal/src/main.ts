@@ -28,12 +28,13 @@ const bridge = linkBridge<WorkspaceSshTerminalBridge, WorkspaceSshTerminalPostMe
   initialBridge: {
     ...defaultTerminalState,
     closeSession: async () => undefined,
-    readSession: async (request) => ({ chunks: [], nextSeq: request.since }),
     reportError: async () => undefined,
     reportReady: async () => undefined,
     reportSessionStatus: async () => undefined,
     resizeSession: async () => undefined,
+    startOutputStream: async () => undefined,
     startSession: async () => ({ sessionId: "", workspacePath: "" }),
+    stopOutputStream: async () => undefined,
     writeSession: async () => undefined,
   },
 });
@@ -43,14 +44,14 @@ let fitAddon: FitAddon | undefined;
 let sessionId = "";
 let nextSeq = 0;
 let currentState = defaultTerminalState;
-let pollTimer = 0;
 let reconnectTimer = 0;
-let isPolling = false;
 let isStartingSession = false;
 let isClosed = false;
 let lastResize = { cols: 80, rows: 24 };
 let lastReconnectRequestId = currentState.reconnectRequestId;
 let reconnectAttempt = 0;
+let lastReportedStatus: WorkspaceSshTerminalSessionStatus | undefined;
+let lastReportedMessage: string | undefined;
 let scrollTouchLastY: number | undefined;
 
 bridge.addEventListener("terminalState", (state) => {
@@ -65,6 +66,13 @@ bridge.addEventListener("terminalState", (state) => {
       void reconnectSession("manual");
     }
   }
+});
+
+bridge.addEventListener("terminalOutput", (event) => {
+  if (event.terminalId !== terminalId || event.sessionId !== sessionId) {
+    return;
+  }
+  handleOutputResponse(event.response);
 });
 
 void initializeTerminal();
@@ -202,6 +210,9 @@ async function startSession(status: WorkspaceSshTerminalSessionStatus) {
   });
   try {
     const previousSessionId = sessionId;
+    if (previousSessionId) {
+      await bridge.stopOutputStream({ sessionId: previousSessionId, terminalId }).catch(() => {});
+    }
     const response = await bridge.startSession({
       cols: lastResize.cols,
       rows: lastResize.rows,
@@ -214,7 +225,7 @@ async function startSession(status: WorkspaceSshTerminalSessionStatus) {
       nextSeq = 0;
       terminal.writeln("\r\n[previous terminal session was unavailable; started a new one]\r\n");
     }
-    schedulePoll(0);
+    await bridge.startOutputStream({ sessionId, since: nextSeq, terminalId });
   } catch (error) {
     scheduleReconnect(error);
   } finally {
@@ -231,54 +242,29 @@ function normalizeTerminalSize(size: { cols: number; rows: number }) {
   };
 }
 
-function pollOutput() {
-  if (isClosed || !sessionId || isPolling) {
-    return;
+function handleOutputResponse(response: {
+  chunks?: Array<{ data: string; seq: number }>;
+  exitCode?: number | null;
+  exitedAt?: string;
+  nextSeq?: number;
+}) {
+  const chunks = Array.isArray(response?.chunks) ? response.chunks : [];
+  for (const chunk of chunks) {
+    terminal?.write(chunk.data);
   }
-  if (pollTimer) {
-    window.clearTimeout(pollTimer);
-    pollTimer = 0;
+  nextSeq = typeof response?.nextSeq === "number" ? response.nextSeq : nextSeq;
+  reconnectAttempt = 0;
+  void reportSessionStatus("connected");
+  if (response?.exitedAt) {
+    isClosed = true;
+    void reportSessionStatus(
+      "closed",
+      typeof response.exitCode === "number" ? `Exited with ${response.exitCode}` : undefined,
+    );
+    terminal?.writeln(
+      `\r\n[session closed${typeof response.exitCode === "number" ? `: ${response.exitCode}` : ""}]\r\n`,
+    );
   }
-  isPolling = true;
-  bridge
-    .readSession({ sessionId, since: nextSeq, terminalId })
-    .then((response) => {
-      const chunks = Array.isArray(response?.chunks) ? response.chunks : [];
-      for (const chunk of chunks) {
-        terminal?.write(chunk.data);
-      }
-      nextSeq = typeof response?.nextSeq === "number" ? response.nextSeq : nextSeq;
-      reconnectAttempt = 0;
-      void reportSessionStatus("connected");
-      if (response?.exitedAt) {
-        isClosed = true;
-        void reportSessionStatus(
-          "closed",
-          typeof response.exitCode === "number" ? `Exited with ${response.exitCode}` : undefined,
-        );
-        terminal?.writeln(
-          `\r\n[session closed${typeof response.exitCode === "number" ? `: ${response.exitCode}` : ""}]\r\n`,
-        );
-        return;
-      }
-      schedulePoll(120);
-    })
-    .catch((error) => {
-      scheduleReconnect(error);
-    })
-    .finally(() => {
-      isPolling = false;
-    });
-}
-
-function schedulePoll(delay: number) {
-  if (isClosed) {
-    return;
-  }
-  if (pollTimer) {
-    window.clearTimeout(pollTimer);
-  }
-  pollTimer = window.setTimeout(pollOutput, delay);
 }
 
 function scheduleReconnect(error: unknown) {
@@ -318,6 +304,11 @@ async function reconnectSession(source: "auto" | "manual") {
 }
 
 async function reportSessionStatus(status: WorkspaceSshTerminalSessionStatus, message?: string) {
+  if (lastReportedStatus === status && lastReportedMessage === message) {
+    return;
+  }
+  lastReportedStatus = status;
+  lastReportedMessage = message;
   await bridge
     .reportSessionStatus({
       message,
@@ -334,11 +325,11 @@ window.addEventListener("resize", () => {
 
 window.addEventListener("beforeunload", () => {
   isClosed = true;
-  if (pollTimer) {
-    window.clearTimeout(pollTimer);
-  }
   if (reconnectTimer) {
     window.clearTimeout(reconnectTimer);
+  }
+  if (sessionId) {
+    void bridge.stopOutputStream({ sessionId, terminalId }).catch(() => {});
   }
 });
 

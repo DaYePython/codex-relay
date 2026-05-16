@@ -17,14 +17,15 @@ export type WorkspaceSshTerminalSessionStatus =
 
 type WorkspaceSshTerminalBridgeShape = WorkspaceSshTerminalState & {
   closeSession(request: WorkspaceSshTerminalSessionRequest): Promise<void>;
-  readSession(request: WorkspaceSshTerminalReadRequest): Promise<WorkspaceTerminalOutputResponse>;
   reportError(request: WorkspaceSshTerminalErrorRequest): Promise<void>;
   reportReady(request: WorkspaceSshTerminalReadyRequest): Promise<void>;
   reportSessionStatus(request: WorkspaceSshTerminalStatusRequest): Promise<void>;
   resizeSession(request: WorkspaceSshTerminalResizeRequest): Promise<void>;
+  startOutputStream(request: WorkspaceSshTerminalReadRequest): Promise<void>;
   startSession(
     request: WorkspaceSshTerminalStartRequest,
   ): Promise<{ sessionId: string; workspacePath: string }>;
+  stopOutputStream(request: WorkspaceSshTerminalSessionRequest): Promise<void>;
   writeSession(request: WorkspaceSshTerminalWriteRequest): Promise<void>;
 };
 
@@ -66,7 +67,6 @@ type WorkspaceSshTerminalWriteRequest = WorkspaceSshTerminalSessionRequest & {
 
 type WorkspaceSshTerminalBridgeHandlers = {
   closeSession(sessionId: string): Promise<void>;
-  readSession(sessionId: string, since: number): Promise<WorkspaceTerminalOutputResponse>;
   reportError(message: string): void;
   reportReady(): void;
   reportSessionStatus(
@@ -75,7 +75,9 @@ type WorkspaceSshTerminalBridgeHandlers = {
     sessionId: string | undefined,
   ): void;
   resizeSession(sessionId: string, cols: number, rows: number): Promise<void>;
+  startOutputStream(sessionId: string, since: number): Promise<void>;
   startSession(cols: number, rows: number): Promise<{ sessionId: string; workspacePath: string }>;
+  stopOutputStream(sessionId: string): Promise<void>;
   writeSession(sessionId: string, data: string): Promise<void>;
 };
 
@@ -87,11 +89,22 @@ const workspaceSshTerminalBridgeHandlers = new Map<string, WorkspaceSshTerminalB
 let nextWorkspaceSshTerminalId = 0;
 
 export const workspaceSshTerminalPostMessageSchema = {
+  terminalOutput: {
+    validate(value: unknown) {
+      return value as WorkspaceSshTerminalOutputEvent;
+    },
+  },
   terminalState: {
     validate(value: unknown) {
       return value as WorkspaceSshTerminalState;
     },
   },
+};
+
+export type WorkspaceSshTerminalOutputEvent = {
+  response: WorkspaceTerminalOutputResponse;
+  sessionId: string;
+  terminalId: string;
 };
 
 export type WorkspaceSshTerminalPostMessageSchema = typeof workspaceSshTerminalPostMessageSchema;
@@ -102,12 +115,6 @@ export const workspaceSshTerminalBridge = bridge<WorkspaceSshTerminalBridgeShape
     await workspaceSshTerminalBridgeHandlers
       .get(request.terminalId)
       ?.closeSession(request.sessionId);
-  },
-  async readSession(request) {
-    const response = await workspaceSshTerminalBridgeHandlers
-      .get(request.terminalId)
-      ?.readSession(request.sessionId, request.since);
-    return response ?? { chunks: [], nextSeq: request.since };
   },
   async reportError(request) {
     workspaceSshTerminalBridgeHandlers.get(request.terminalId)?.reportError(request.message);
@@ -125,6 +132,11 @@ export const workspaceSshTerminalBridge = bridge<WorkspaceSshTerminalBridgeShape
       .get(request.terminalId)
       ?.resizeSession(request.sessionId, request.cols, request.rows);
   },
+  async startOutputStream(request) {
+    await workspaceSshTerminalBridgeHandlers
+      .get(request.terminalId)
+      ?.startOutputStream(request.sessionId, request.since);
+  },
   async startSession(request) {
     const response = await workspaceSshTerminalBridgeHandlers
       .get(request.terminalId)
@@ -133,6 +145,11 @@ export const workspaceSshTerminalBridge = bridge<WorkspaceSshTerminalBridgeShape
       throw new Error("Terminal bridge is not ready.");
     }
     return response;
+  },
+  async stopOutputStream(request) {
+    await workspaceSshTerminalBridgeHandlers
+      .get(request.terminalId)
+      ?.stopOutputStream(request.sessionId);
   },
   async writeSession(request) {
     await workspaceSshTerminalBridgeHandlers
@@ -171,6 +188,12 @@ export function registerWorkspaceSshTerminalBridgeHandlers(
 export function postWorkspaceSshTerminalState(state: WorkspaceSshTerminalState) {
   workspaceSshTerminalBridge.setState(state);
   postWorkspaceSshTerminalBridgeMessage("terminalState", state, {
+    broadcast: true,
+  });
+}
+
+export function postWorkspaceSshTerminalOutput(event: WorkspaceSshTerminalOutputEvent) {
+  postWorkspaceSshTerminalBridgeMessage("terminalOutput", event, {
     broadcast: true,
   });
 }

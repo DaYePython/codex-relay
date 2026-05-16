@@ -16,13 +16,14 @@ import { Spacing } from "@/constants/theme";
 import {
   closeWorkspaceTerminalSession,
   createWorkspaceTerminalSession,
-  readWorkspaceTerminalOutput,
   resizeWorkspaceTerminalSession,
+  streamWorkspaceTerminalOutput,
   writeWorkspaceTerminalInput,
 } from "@/lib/codex-relay-api";
 
 import {
   createWorkspaceSshTerminalId,
+  postWorkspaceSshTerminalOutput,
   postWorkspaceSshTerminalState,
   registerWorkspaceSshTerminalBridgeHandlers,
   type WorkspaceSshTerminalSessionStatus,
@@ -51,6 +52,7 @@ export function WorkspaceSshTerminalTab({ workspacePath }: { workspacePath?: str
   const terminalNativeInputValueRef = useRef("");
   const terminalInputClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const terminalOutputStreamRef = useRef<null | (() => void)>(null);
   const activeSessionWorkspacePathRef = useRef<string | null>(null);
   const keyboardAvoidingEnabled = useKeyboardState(
     (state) => state.isVisible && state.height > 120,
@@ -114,6 +116,11 @@ export function WorkspaceSshTerminalTab({ workspacePath }: { workspacePath?: str
       () => undefined,
     );
     return request;
+  };
+
+  const stopTerminalOutputStream = () => {
+    terminalOutputStreamRef.current?.();
+    terminalOutputStreamRef.current = null;
   };
 
   const sendTerminalInput = async (data: string) => {
@@ -201,23 +208,13 @@ export function WorkspaceSshTerminalTab({ workspacePath }: { workspacePath?: str
   useEffect(() => {
     return registerWorkspaceSshTerminalBridgeHandlers(terminalId, {
       async closeSession(sessionId) {
+        stopTerminalOutputStream();
         await enqueueTerminalRequest(() => closeWorkspaceTerminalSession(sessionId)).catch(
           () => {},
         );
         if (activeSessionIdRef.current === sessionId) {
           activeSessionIdRef.current = null;
           activeSessionWorkspacePathRef.current = null;
-        }
-      },
-      async readSession(sessionId, since) {
-        try {
-          return await enqueueTerminalRequest(() => readWorkspaceTerminalOutput(sessionId, since));
-        } catch (error) {
-          if (isTerminalSessionMissing(error) && activeSessionIdRef.current === sessionId) {
-            activeSessionIdRef.current = null;
-            activeSessionWorkspacePathRef.current = null;
-          }
-          throw error;
         }
       },
       reportError(message) {
@@ -250,6 +247,30 @@ export function WorkspaceSshTerminalTab({ workspacePath }: { workspacePath?: str
           resizeWorkspaceTerminalSession(sessionId, { cols, rows }),
         ).catch((error) => {
           handleTerminalApiError(error);
+        });
+      },
+      async startOutputStream(sessionId, since) {
+        stopTerminalOutputStream();
+        terminalOutputStreamRef.current = streamWorkspaceTerminalOutput(sessionId, since, {
+          onError(error) {
+            if (isTerminalSessionMissing(error) && activeSessionIdRef.current === sessionId) {
+              activeSessionIdRef.current = null;
+              activeSessionWorkspacePathRef.current = null;
+            }
+            handleTerminalApiError(error);
+          },
+          onOutput(response) {
+            postWorkspaceSshTerminalOutput({
+              response,
+              sessionId,
+              terminalId,
+            });
+            if (response.exitedAt && activeSessionIdRef.current === sessionId) {
+              activeSessionIdRef.current = null;
+              activeSessionWorkspacePathRef.current = null;
+              stopTerminalOutputStream();
+            }
+          },
         });
       },
       async startSession(cols, rows) {
@@ -285,6 +306,11 @@ export function WorkspaceSshTerminalTab({ workspacePath }: { workspacePath?: str
           workspacePath: response.workspacePath,
         };
       },
+      async stopOutputStream(sessionId) {
+        if (activeSessionIdRef.current === sessionId) {
+          stopTerminalOutputStream();
+        }
+      },
       async writeSession(sessionId, data) {
         await enqueueTerminalRequest(() => writeWorkspaceTerminalInput(sessionId, data)).catch(
           (error) => {
@@ -310,6 +336,7 @@ export function WorkspaceSshTerminalTab({ workspacePath }: { workspacePath?: str
         clearTimeout(terminalInputClearTimerRef.current);
         terminalInputClearTimerRef.current = null;
       }
+      stopTerminalOutputStream();
       const activeSessionId = activeSessionIdRef.current;
       if (activeSessionId) {
         void enqueueTerminalRequest(() => closeWorkspaceTerminalSession(activeSessionId));

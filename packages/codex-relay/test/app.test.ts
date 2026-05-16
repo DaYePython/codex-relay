@@ -637,7 +637,7 @@ describe("Codex Relay server routes", () => {
         headers: { "content-type": "application/json" },
       },
     );
-    expect(legacyInputResponse.status).toBe(200);
+    expect(legacyInputResponse.status).toBe(204);
 
     const inputResponse = await app.request(
       `/v1/workspace/terminal/sessions/${startBody.sessionId}/input`,
@@ -647,7 +647,7 @@ describe("Codex Relay server routes", () => {
         headers: { "content-type": "application/json" },
       },
     );
-    expect(inputResponse.status).toBe(200);
+    expect(inputResponse.status).toBe(204);
 
     await waitUntil(async () => {
       const outputResponse = await app.request(
@@ -664,7 +664,60 @@ describe("Codex Relay server routes", () => {
       `/v1/workspace/terminal/sessions/${startBody.sessionId}`,
       { method: "DELETE" },
     );
-    expect(closeResponse.status).toBe(200);
+    expect(closeResponse.status).toBe(204);
+  });
+
+  it("streams workspace terminal output without repeated output reads", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const app = createApp({ codex: createMockCodex(), workspacePath });
+
+    const startResponse = await app.request("/v1/workspace/terminal/sessions", {
+      method: "POST",
+      body: JSON.stringify({ cols: 80, rows: 24 }),
+      headers: { "content-type": "application/json" },
+    });
+    const startBody = await startResponse.json();
+    const streamResponse = await app.request(
+      `/v1/workspace/terminal/sessions/${startBody.sessionId}/output/stream?since=0`,
+    );
+    expect(streamResponse.status).toBe(200);
+    expect(streamResponse.headers.get("content-type")).toContain("text/event-stream");
+
+    const inputResponse = await app.request(
+      `/v1/workspace/terminal/sessions/${startBody.sessionId}/input`,
+      {
+        method: "POST",
+        body: JSON.stringify({ data: "printf terminal-stream-smoke\\n\nexit\n" }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(inputResponse.status).toBe(204);
+
+    const reader = streamResponse.body?.getReader();
+    expect(reader).toBeDefined();
+    const decoder = new TextDecoder();
+    let streamedText = "";
+    await Promise.race([
+      (async () => {
+        for (;;) {
+          const result = await reader!.read();
+          if (result.done) {
+            return;
+          }
+          streamedText += decoder.decode(result.value, { stream: true });
+          if (streamedText.includes("terminal-stream-smoke")) {
+            await reader!.cancel();
+            return;
+          }
+        }
+      })(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Timed out waiting for terminal stream output.")), 1000),
+      ),
+    ]);
+
+    expect(streamedText).toContain("event: output");
+    expect(streamedText).toContain("terminal-stream-smoke");
   });
 
   it("returns git status and diff for workspace changes", async () => {

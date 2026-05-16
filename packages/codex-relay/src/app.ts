@@ -247,6 +247,8 @@ type WorkspaceTerminalOutputChunk = {
   seq: number;
 };
 
+type WorkspaceTerminalOutputSubscriber = (response: WorkspaceTerminalOutputResponse) => void;
+
 type WorkspaceTerminalSession = {
   child: pty.IPty;
   cols: number;
@@ -257,6 +259,7 @@ type WorkspaceTerminalSession = {
   seq: number;
   sessionId: string;
   startedAt: string;
+  subscribers: Set<WorkspaceTerminalOutputSubscriber>;
   workspacePath: string;
 };
 
@@ -912,14 +915,91 @@ export function createApp(options: AppOptions = {}) {
     }
 
     const since = Number(c.req.query("since") ?? "0");
-    const chunks = session.output.filter((chunk) => chunk.seq >= since);
-    const response: WorkspaceTerminalOutputResponse = WorkspaceTerminalOutputResponseSchema.parse({
-      chunks,
-      exitCode: session.exitCode,
-      exitedAt: session.exitedAt,
-      nextSeq: session.seq,
+    return secureJson(
+      c,
+      options.pairing,
+      secureSessionsByTokenHash,
+      workspaceTerminalOutputResponse(session, since),
+    );
+  });
+
+  app.get("/v1/workspace/terminal/sessions/:sessionId/output/stream", async (c) => {
+    const session = workspaceTerminalSessions.get(c.req.param("sessionId"));
+    if (!session) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("workspace_terminal_not_found", "Terminal session was not found."),
+        404,
+      );
+    }
+
+    const since = Number(c.req.query("since") ?? "0");
+    const encoder = new TextEncoder();
+    const secureSession = getSecureSessionForRequest(c, options.pairing, secureSessionsByTokenHash);
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let closed = false;
+    let stopHeartbeat: ReturnType<typeof setInterval> | undefined;
+    let unsubscribe = () => {};
+
+    const closeStream = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      if (stopHeartbeat) {
+        clearInterval(stopHeartbeat);
+        stopHeartbeat = undefined;
+      }
+      unsubscribe();
+      if (streamController) {
+        activeStreamControllers.delete(streamController);
+        closeSseController(streamController);
+      }
+    };
+
+    const send = (response: WorkspaceTerminalOutputResponse) => {
+      if (closed || !streamController) {
+        return;
+      }
+      if (!sendTerminalOutputSse(streamController, encoder, secureSession, response)) {
+        closeStream();
+        return;
+      }
+      if (response.exitedAt) {
+        closeStream();
+      }
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+        activeStreamControllers.add(controller);
+        send(workspaceTerminalOutputResponse(session, since));
+        if (session.exitedAt) {
+          return;
+        }
+        unsubscribe = subscribeWorkspaceTerminalOutput(session, send);
+        stopHeartbeat = setInterval(() => {
+          if (!closed && streamController) {
+            enqueueSseChunk(streamController, encoder.encode(": keep-alive\n\n"));
+          }
+        }, 30000);
+      },
+      cancel() {
+        closeStream();
+      },
     });
-    return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
+
+    return new Response(stream, {
+      headers: {
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "content-type": "text/event-stream",
+        "x-accel-buffering": "no",
+      },
+    });
   });
 
   app.post("/v1/workspace/terminal/sessions/:sessionId/input", async (c) => {
@@ -961,7 +1041,7 @@ export function createApp(options: AppOptions = {}) {
     }
 
     session.child.write(parsed.data.data);
-    return secureJson(c, options.pairing, secureSessionsByTokenHash, { ok: true });
+    return new Response(null, { status: 204 });
   });
 
   app.post("/v1/workspace/terminal/sessions/:sessionId/resize", async (c) => {
@@ -997,7 +1077,7 @@ export function createApp(options: AppOptions = {}) {
     if (!session.exitedAt) {
       session.child.resize(parsed.data.cols, parsed.data.rows);
     }
-    return secureJson(c, options.pairing, secureSessionsByTokenHash, { ok: true });
+    return new Response(null, { status: 204 });
   });
 
   app.delete("/v1/workspace/terminal/sessions/:sessionId", async (c) => {
@@ -1006,7 +1086,7 @@ export function createApp(options: AppOptions = {}) {
       closeWorkspaceTerminalSession(session);
       workspaceTerminalSessions.delete(session.sessionId);
     }
-    return secureJson(c, options.pairing, secureSessionsByTokenHash, { ok: true });
+    return new Response(null, { status: 204 });
   });
 
   app.get(apiPaths.models, async (c) => {
@@ -4808,6 +4888,25 @@ function sendSse(
   }
 }
 
+function sendTerminalOutputSse(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  secureSession: SecureSessionHandle | undefined,
+  response: WorkspaceTerminalOutputResponse,
+) {
+  const parsed = WorkspaceTerminalOutputResponseSchema.parse(response);
+  const data = secureSession
+    ? EncryptedPayloadSchema.parse(encryptForMobile(secureSession.session, JSON.stringify(parsed)))
+    : parsed;
+  if (secureSession) {
+    void secureSession.persist().catch(() => undefined);
+  }
+  if (!enqueueSseChunk(controller, encoder.encode("event: output\n"))) {
+    return false;
+  }
+  return enqueueSseChunk(controller, encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+}
+
 function threadIdFromStreamEvent(event: StreamThreadRunEvent) {
   if ("threadId" in event && typeof event.threadId === "string") {
     return event.threadId;
@@ -7346,21 +7445,28 @@ function createWorkspaceTerminalSession(input: {
     seq: 0,
     sessionId,
     startedAt,
+    subscribers: new Set(),
     workspacePath: input.cwd,
   };
 
   const appendOutput = (data: string) => {
-    session.output.push({ data, seq: session.seq });
+    const chunk = { data, seq: session.seq };
+    session.output.push(chunk);
     session.seq += 1;
     if (session.output.length > maxWorkspaceTerminalOutputChunks) {
       session.output.splice(0, session.output.length - maxWorkspaceTerminalOutputChunks);
     }
+    notifyWorkspaceTerminalOutput(session, {
+      chunks: [chunk],
+      nextSeq: session.seq,
+    });
   };
 
   child.onData(appendOutput);
   child.onExit(({ exitCode }) => {
     session.exitCode = exitCode;
     session.exitedAt = new Date().toISOString();
+    notifyWorkspaceTerminalOutput(session, workspaceTerminalOutputResponse(session, session.seq));
   });
 
   return session;
@@ -7371,6 +7477,37 @@ function closeWorkspaceTerminalSession(session: WorkspaceTerminalSession) {
     return;
   }
   session.child.kill();
+}
+
+function workspaceTerminalOutputResponse(
+  session: WorkspaceTerminalSession,
+  since: number,
+): WorkspaceTerminalOutputResponse {
+  return WorkspaceTerminalOutputResponseSchema.parse({
+    chunks: session.output.filter((chunk) => chunk.seq >= since),
+    exitCode: session.exitCode,
+    exitedAt: session.exitedAt,
+    nextSeq: session.seq,
+  });
+}
+
+function subscribeWorkspaceTerminalOutput(
+  session: WorkspaceTerminalSession,
+  subscriber: WorkspaceTerminalOutputSubscriber,
+) {
+  session.subscribers.add(subscriber);
+  return () => {
+    session.subscribers.delete(subscriber);
+  };
+}
+
+function notifyWorkspaceTerminalOutput(
+  session: WorkspaceTerminalSession,
+  response: WorkspaceTerminalOutputResponse,
+) {
+  for (const subscriber of session.subscribers) {
+    subscriber(response);
+  }
 }
 
 async function listWorkspaceFiles(workspacePath: string, query: string, directory: string) {
