@@ -3377,6 +3377,95 @@ describe("Codex Relay server routes", () => {
     expect(body).toContain('"state":"completed"');
   });
 
+  it("normalizes cumulative app-server deltas before streaming them to mobile", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const notificationHandlers = new Set<(notification: unknown) => void>();
+    const now = Date.now() / 1000;
+    const appServer = {
+      onNotification(handler: (notification: unknown) => void) {
+        notificationHandlers.add(handler);
+        return () => notificationHandlers.delete(handler);
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      startThread: vi.fn<() => Promise<unknown>>(async () => ({
+        id: "app-thread-cumulative-delta",
+        createdAt: now,
+        cwd: workspacePath,
+        modelProvider: "gpt-5.5",
+        name: "Cumulative delta",
+        preview: "Cumulative delta",
+        source: "app",
+        status: "idle",
+        turns: [],
+        updatedAt: now,
+      })),
+      startTurn: vi.fn<() => Promise<unknown>>(async () => {
+        queueMicrotask(() => {
+          for (const handler of notificationHandlers) {
+            handler({
+              method: "item/agentMessage/delta",
+              params: {
+                delta: "Hello",
+                itemId: "assistant-cumulative-delta",
+                threadId: "app-thread-cumulative-delta",
+                turnId: "turn-cumulative-delta",
+              },
+            });
+            handler({
+              method: "item/agentMessage/delta",
+              params: {
+                delta: "Hello world",
+                itemId: "assistant-cumulative-delta",
+                threadId: "app-thread-cumulative-delta",
+                turnId: "turn-cumulative-delta",
+              },
+            });
+            handler({
+              method: "turn/completed",
+              params: {
+                status: "completed",
+                threadId: "app-thread-cumulative-delta",
+                turnId: "turn-cumulative-delta",
+              },
+            });
+          }
+        });
+        return {
+          id: "turn-cumulative-delta",
+          items: [],
+          status: "running",
+          startedAt: null,
+          completedAt: null,
+        };
+      }),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    await app.request("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ title: "Cumulative delta" }),
+      headers: { "content-type": "application/json" },
+    });
+    const response = await app.request("/v1/threads/app-thread-cumulative-delta/runs/stream", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Reply cumulatively" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('"delta":"Hello"');
+    expect(body).toContain('"delta":" world"');
+    expect(body).not.toContain('"delta":"Hello world"');
+    expect(body).toContain('"content":"Hello world"');
+  });
+
   it("fails app-server streamed turns that complete without any response", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const now = Date.now() / 1000;

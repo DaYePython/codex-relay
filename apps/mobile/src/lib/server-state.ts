@@ -752,7 +752,7 @@ function appendMessageDeltaState(
         message.id === messageId
           ? {
               ...message,
-              content: `${message.content}${delta}`,
+              content: `${message.content}${normalizeStreamDelta(message.content, delta)}`,
               state: "streaming",
               updatedAt: new Date().toISOString(),
             }
@@ -760,6 +760,13 @@ function appendMessageDeltaState(
       ),
     };
   });
+}
+
+function normalizeStreamDelta(existingContent: string, incomingDelta: string) {
+  if (!existingContent || !incomingDelta.startsWith(existingContent)) {
+    return incomingDelta;
+  }
+  return incomingDelta.slice(existingContent.length);
 }
 
 function patchThreadState(

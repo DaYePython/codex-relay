@@ -591,7 +591,7 @@ export function appendMessageDelta(threadId: string, messageId: string, delta: s
         message.id === messageId
           ? {
               ...message,
-              content: `${message.content}${delta}`,
+              content: `${message.content}${normalizeStreamDelta(message.content, delta)}`,
               state: "streaming",
               updatedAt: new Date().toISOString(),
             }
@@ -599,6 +599,13 @@ export function appendMessageDelta(threadId: string, messageId: string, delta: s
       ),
     };
   });
+}
+
+function normalizeStreamDelta(existingContent: string, incomingDelta: string) {
+  if (!existingContent || !incomingDelta.startsWith(existingContent)) {
+    return incomingDelta;
+  }
+  return incomingDelta.slice(existingContent.length);
 }
 
 export function applyStreamEvent(

@@ -2820,22 +2820,25 @@ async function runPromptStreamed(input: {
       }
 
       if (kind === "assistant") {
-        assistantMessage = appendMessageDelta(
+        const assistantPatch = appendMessageDelta(
           input.messagesByThreadId,
           activeThreadId,
           assistantMessage.id,
           text,
         );
+        assistantMessage = assistantPatch.message;
         updateThread(input.threads, input.messagesByThreadId, activeThreadId, {
           state: "running",
           lastResult: assistantMessage.content,
         });
-        sendSse(input.controller, input.encoder, input.secureSession, {
-          type: "thread.message.delta",
-          threadId: activeThreadId,
-          messageId: assistantMessage.id,
-          delta: text,
-        });
+        if (assistantPatch.delta) {
+          sendSse(input.controller, input.encoder, input.secureSession, {
+            type: "thread.message.delta",
+            threadId: activeThreadId,
+            messageId: assistantMessage.id,
+            delta: assistantPatch.delta,
+          });
+        }
       } else {
         const structured = structuredStreamMessage(kind, event, text);
         const statusMessage = appendMessage(input.messagesByThreadId, activeThreadId, {
@@ -3200,22 +3203,25 @@ async function streamRunningAppServerThread(input: {
               });
             }
             assistantMessageId = itemId;
-            const message = appendMessageDelta(
+            const patch = appendMessageDelta(
               input.messagesByThreadId,
               input.threadId,
               itemId,
               delta,
             );
+            const message = patch.message;
             updateThread(input.threads, input.messagesByThreadId, input.threadId, {
               state: "running",
               lastResult: message.content,
             });
-            sendSse(input.controller, input.encoder, input.secureSession, {
-              type: "thread.message.delta",
-              threadId: input.threadId,
-              messageId: itemId,
-              delta,
-            });
+            if (patch.delta) {
+              sendSse(input.controller, input.encoder, input.secureSession, {
+                type: "thread.message.delta",
+                threadId: input.threadId,
+                messageId: itemId,
+                delta: patch.delta,
+              });
+            }
             return;
           }
           case "turn/plan/updated": {
@@ -3542,23 +3548,26 @@ async function runAppServerPromptStreamed(input: {
               });
             }
             assistantMessageId = itemId;
-            const message = appendMessageDelta(
+            const patch = appendMessageDelta(
               input.messagesByThreadId,
               activeThreadId,
               itemId,
               delta,
             );
+            const message = patch.message;
             producedTurnOutput = true;
             updateThread(input.threads, input.messagesByThreadId, activeThreadId, {
               state: "running",
               lastResult: message.content,
             });
-            sendSse(input.controller, input.encoder, input.secureSession, {
-              type: "thread.message.delta",
-              threadId: activeThreadId,
-              messageId: itemId,
-              delta,
-            });
+            if (patch.delta) {
+              sendSse(input.controller, input.encoder, input.secureSession, {
+                type: "thread.message.delta",
+                threadId: activeThreadId,
+                messageId: itemId,
+                delta: patch.delta,
+              });
+            }
             return;
           }
           case "turn/plan/updated": {
@@ -4713,10 +4722,19 @@ function appendMessageDelta(
   delta: string,
 ) {
   const existing = messagesByThreadId.get(threadId)?.find((message) => message.id === messageId);
-  return updateMessage(messagesByThreadId, threadId, messageId, {
-    content: `${existing?.content ?? ""}${delta}`,
+  const normalizedDelta = normalizeStreamDelta(existing?.content ?? "", delta);
+  const message = updateMessage(messagesByThreadId, threadId, messageId, {
+    content: `${existing?.content ?? ""}${normalizedDelta}`,
     state: "streaming",
   });
+  return { delta: normalizedDelta, message };
+}
+
+function normalizeStreamDelta(existingContent: string, incomingDelta: string) {
+  if (!existingContent || !incomingDelta.startsWith(existingContent)) {
+    return incomingDelta;
+  }
+  return incomingDelta.slice(existingContent.length);
 }
 
 function markApprovalMessageResolved(
