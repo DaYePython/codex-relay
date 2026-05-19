@@ -70,18 +70,6 @@ export function ConnectionBanner({
               </ThemedText>
             </View>
           </View>
-          <View style={styles.pairActions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Refresh connection"
-              onPress={onRefresh}
-              style={({ pressed }) => [styles.refreshAction, pressed && styles.pressed]}
-            >
-              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.refreshText}>
-                Refresh connection
-              </ThemedText>
-            </Pressable>
-          </View>
         </Animated.View>
       </Animated.View>
     );

@@ -2041,6 +2041,7 @@ export function ChatScreen() {
               </Animated.View>
             }
             composerDisabled={connection === "offline"}
+            composerInputEditable={connection !== "offline" || hasPairedSession}
             composerFocusRecoveryKey={connection}
             collaborationMode={collaborationMode}
             composerFocusRequestKey={composerFocusRequestKey}

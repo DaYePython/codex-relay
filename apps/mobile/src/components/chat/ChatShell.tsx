@@ -41,6 +41,7 @@ export function ChatShell({
   composerFooter,
   composerFocusRequestKey,
   composerFocusRecoveryKey,
+  composerInputEditable,
   contextWindowUsage,
   collaborationMode,
   inputNativeID,
@@ -80,6 +81,7 @@ export function ChatShell({
   composerFooter?: ReactNode;
   composerFocusRequestKey?: number;
   composerFocusRecoveryKey?: number | string;
+  composerInputEditable?: boolean;
   contextWindowUsage?: ContextWindowUsage;
   collaborationMode: ThreadCollaborationMode;
   inputNativeID: string;
@@ -189,6 +191,7 @@ export function ChatShell({
                 contextWindowUsage={contextWindowUsage}
                 disabled={composerDisabled}
                 disabledPlaceholder={composerDisabledPlaceholder}
+                inputEditable={composerInputEditable}
                 focusRequestKey={composerFocusRequestKey}
                 focusRecoveryKey={composerFocusRecoveryKey}
                 isAttachingImage={isAttachingImage}

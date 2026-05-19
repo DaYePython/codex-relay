@@ -217,6 +217,7 @@ export const ChatComposer = memo(function ChatComposer({
   footer,
   focusRequestKey,
   focusRecoveryKey,
+  inputEditable,
   isAttachingImage,
   isRunning,
   nativeID,
@@ -250,6 +251,7 @@ export const ChatComposer = memo(function ChatComposer({
   footer?: ReactNode;
   focusRequestKey?: number;
   focusRecoveryKey?: number | string;
+  inputEditable?: boolean;
   isAttachingImage: boolean;
   isRunning: boolean;
   nativeID?: string;
@@ -322,6 +324,7 @@ export const ChatComposer = memo(function ChatComposer({
   const attachLaunchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const focusRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const isInputEditable = inputEditable ?? !disabled;
   const hasMessageContent =
     Boolean(value.trim()) || attachments.length > 0 || selectedSkills.length > 0;
   const isAttachBusy = isAttachingImage || isAttachLaunchPending;
@@ -384,21 +387,21 @@ export const ChatComposer = memo(function ChatComposer({
   }, []);
 
   useEffect(() => {
-    if (!focusRequestKey || disabled) {
+    if (!focusRequestKey || !isInputEditable) {
       return;
     }
 
     requestAnimationFrame(() => {
       inputRef.current?.focus();
     });
-  }, [disabled, focusRequestKey]);
+  }, [focusRequestKey, isInputEditable]);
 
   useEffect(() => {
     if (previousFocusRecoveryKeyRef.current === focusRecoveryKey) {
       return;
     }
     previousFocusRecoveryKeyRef.current = focusRecoveryKey;
-    if (focusRecoveryKey === undefined || disabled) {
+    if (focusRecoveryKey === undefined || !isInputEditable) {
       return;
     }
 
@@ -417,7 +420,7 @@ export const ChatComposer = memo(function ChatComposer({
       focusRecoveryTimeoutRef.current = undefined;
       inputRef.current?.focus();
     }, 220);
-  }, [disabled, focusRecoveryKey, isKeyboardVisible]);
+  }, [focusRecoveryKey, isInputEditable, isKeyboardVisible]);
 
   useEffect(() => {
     const shouldRestoreSkillMentions =
@@ -982,7 +985,7 @@ export const ChatComposer = memo(function ChatComposer({
           autoCapitalize="sentences"
           cursorColor={theme.text}
           defaultValue={value}
-          editable={!disabled}
+          editable={isInputEditable}
           markdownStyle={inputMarkdownStyle}
           onBlur={() => {
             isInputFocusedRef.current = false;
@@ -996,7 +999,7 @@ export const ChatComposer = memo(function ChatComposer({
           }}
           ref={inputRef}
           placeholder={
-            disabled
+            !isInputEditable
               ? (disabledPlaceholder ?? "Connect to the Codex Relay server first")
               : isPlanMode
                 ? PLAN_COMPOSER_PLACEHOLDER
