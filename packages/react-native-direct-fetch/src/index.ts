@@ -162,9 +162,7 @@ function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
 
-async function normalizeBody(
-  body: BodyInit | null | undefined,
-): Promise<
+async function normalizeBody(body: BodyInit | null | undefined): Promise<
   | {
       bodyString?: string;
       bodyFormData?: DirectFetchFormDataPart[];
@@ -209,43 +207,43 @@ function isFormData(body: unknown): body is FormData {
 
 function serializeFormData(formData: FormData): DirectFetchFormDataPart[] {
   if (typeof (formData as { getParts?: unknown }).getParts === "function") {
-    return ((formData as unknown as { getParts: () => unknown[] }).getParts()).flatMap<
-      DirectFetchFormDataPart
-    >((part) => {
-      if (!part || typeof part !== "object") {
+    return (formData as unknown as { getParts: () => unknown[] })
+      .getParts()
+      .flatMap<DirectFetchFormDataPart>((part) => {
+        if (!part || typeof part !== "object") {
+          return [];
+        }
+        const rnPart = part as {
+          fieldName?: unknown;
+          fileName?: unknown;
+          headers?: Record<string, unknown>;
+          name?: unknown;
+          string?: unknown;
+          type?: unknown;
+          uri?: unknown;
+        };
+        const fieldName = rnPart.fieldName ?? multipartDispositionValue(rnPart.headers, "name");
+        const name = String(fieldName ?? "");
+        if (!name) {
+          return [];
+        }
+        if (rnPart.string !== undefined) {
+          return [{ name, value: String(rnPart.string) }];
+        }
+        if (typeof rnPart.uri === "string") {
+          const fileName =
+            rnPart.fileName ?? rnPart.name ?? multipartDispositionValue(rnPart.headers, "filename");
+          return [
+            {
+              name,
+              fileUri: rnPart.uri,
+              fileName: String(fileName ?? "file"),
+              mimeType: String(rnPart.type ?? "application/octet-stream"),
+            },
+          ];
+        }
         return [];
-      }
-      const rnPart = part as {
-        fieldName?: unknown;
-        fileName?: unknown;
-        headers?: Record<string, unknown>;
-        name?: unknown;
-        string?: unknown;
-        type?: unknown;
-        uri?: unknown;
-      };
-      const fieldName = rnPart.fieldName ?? multipartDispositionValue(rnPart.headers, "name");
-      const name = String(fieldName ?? "");
-      if (!name) {
-        return [];
-      }
-      if (rnPart.string !== undefined) {
-        return [{ name, value: String(rnPart.string) }];
-      }
-      if (typeof rnPart.uri === "string") {
-        const fileName =
-          rnPart.fileName ?? rnPart.name ?? multipartDispositionValue(rnPart.headers, "filename");
-        return [
-          {
-            name,
-            fileUri: rnPart.uri,
-            fileName: String(fileName ?? "file"),
-            mimeType: String(rnPart.type ?? "application/octet-stream"),
-          },
-        ];
-      }
-      return [];
-    });
+      });
   }
 
   const parts: DirectFetchFormDataPart[] = [];

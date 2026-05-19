@@ -1,7 +1,5 @@
 {
   "typescript": true,
   "outputPath": "assets/icons",
-  "icons": [
-    "fa/FaGithub"
-  ]
+  "icons": ["fa/FaGithub"]
 }

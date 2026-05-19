@@ -17,5 +17,4 @@ export const DefaultContext: IconContext = {
   attr: undefined,
 };
 
-export const IconContext: React.Context<IconContext> =
-  React.createContext(DefaultContext);
+export const IconContext: React.Context<IconContext> = React.createContext(DefaultContext);
