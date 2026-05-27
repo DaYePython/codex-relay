@@ -27,22 +27,10 @@ import {
   type BarcodeScanningResult,
   type ScanningResult,
 } from "expo-camera";
-import * as Clipboard from "expo-clipboard";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useNavigation } from "expo-router";
-import { Star } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Alert,
-  AppState,
-  Keyboard,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, AppState, Keyboard, Linking, Modal, Pressable, View } from "react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 import PagerView from "react-native-pager-view";
 import Animated, { LinearTransition } from "react-native-reanimated";
@@ -50,9 +38,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
 import { ThemedText } from "@/components/themed-text";
-import { Button } from "@/components/ui/button";
 import { AppToast } from "@/components/ui/toast";
-import { codexRelayRepositoryUrl } from "@/constants/links";
 import { Colors, Fonts, Spacing } from "@/constants/theme";
 import { activeThreadAfterRefresh } from "@/lib/active-thread-selection";
 import {
@@ -137,7 +123,6 @@ import {
 } from "@/state/chat-store";
 import { addWorkspacePreviewTab } from "@/state/workspace-preview-store";
 
-import { FaGithub } from "@/assets/icons/fa";
 import { ChatControls } from "./ChatControls";
 import { ChatShell } from "./ChatShell";
 import { ConnectionBanner } from "./ConnectionBanner";
@@ -159,13 +144,11 @@ let isHandlingPairingLink = false;
 let lastHandledPairingUrl: string | undefined;
 
 export function ChatScreen() {
-  const [pastedPairingPayload, setPastedPairingPayload] = useState("");
   const [pasteApprovalCode, setPasteApprovalCode] = useState<string | undefined>(undefined);
   const [pasteApprovalServerUrl, setPasteApprovalServerUrl] = useState<string | undefined>(
     undefined,
   );
   const [isPastePairOpen, setPastePairOpen] = useState(false);
-  const [pairingEntryMode, setPairingEntryMode] = useState<"paste" | "scan">("paste");
   const [isPastePairing, setPastePairing] = useState(false);
   const [isAttachingImages, setAttachingImages] = useState(false);
   const composerFocusRequestKey = 0;
@@ -187,7 +170,7 @@ export function ChatScreen() {
   >(undefined);
   const [isHandlingScan, setHandlingScan] = useState(false);
   const [activePagerPage, setActivePagerPage] = useState(0);
-  const [scannerMessage, setScannerMessage] = useState("Point the camera at the server QR.");
+  const [scannerMessage, setScannerMessage] = useState("Point the camera at the connection QR.");
   const copyToastIdRef = useRef(0);
   const [copyToast, setCopyToast] = useState<{ id: number } | undefined>(undefined);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -1102,14 +1085,14 @@ export function ChatScreen() {
     if (!cameraPermission?.granted) {
       const permission = await requestCameraPermission();
       if (!permission.granted) {
-        Alert.alert("Camera access needed", "Allow camera access to scan the server QR code.");
+        Alert.alert("Camera access needed", "Allow camera access to scan the connection QR code.");
         return;
       }
     }
 
     setHandlingScan(false);
     isHandlingScanRef.current = false;
-    setScannerMessage("Point the camera at the server QR.");
+    setScannerMessage("Point the camera at the connection QR.");
 
     if (CameraView.isModernBarcodeScannerAvailable) {
       isModernScannerOpenRef.current = true;
@@ -1127,67 +1110,7 @@ export function ChatScreen() {
       }
     }
 
-    if (Platform.OS === "ios") {
-      Alert.alert(
-        "QR scanner unavailable",
-        "Paste the pairing payload shown by the server instead.",
-      );
-      await openPastePair();
-      return;
-    }
-
     setScannerOpen(true);
-  }
-
-  async function openPastePair() {
-    setPastedPairingPayload("");
-    setPairingEntryMode("paste");
-    setPasteApprovalCode(undefined);
-    setPasteApprovalServerUrl(undefined);
-    setPastePairOpen(true);
-  }
-
-  async function pastePairPayloadFromClipboard() {
-    try {
-      const clipboardText = await Clipboard.getStringAsync();
-      if (!clipboardText.trim()) {
-        Alert.alert("Clipboard is empty", "Copy the codex-relay://pair payload and try again.");
-        return;
-      }
-      setPastedPairingPayload(clipboardText.trim());
-    } catch (caught) {
-      Alert.alert("Paste failed", errorMessage(caught));
-    }
-  }
-
-  async function submitPastedPair() {
-    if (isPastePairing) {
-      return;
-    }
-
-    setPastePairing(true);
-    setPasteApprovalCode(undefined);
-    setPasteApprovalServerUrl(undefined);
-    try {
-      const pairing = await pairWithQrPayload(pastedPairingPayload, {
-        onApprovalCode(approvalCode, serverUrl) {
-          setPasteApprovalCode(approvalCode);
-          setPasteApprovalServerUrl(serverUrl);
-        },
-      });
-      setServerUrl(pairing.serverUrl);
-      clearServerState(queryClient);
-      syncPairedSessionState();
-      setPastePairOpen(false);
-      setPasteApprovalCode(undefined);
-      setPasteApprovalServerUrl(undefined);
-      hapticSuccess();
-      await refresh();
-    } catch (caught) {
-      Alert.alert("Pairing failed", errorMessage(caught));
-    } finally {
-      setPastePairing(false);
-    }
   }
 
   const handlePairingLink = useCallback(
@@ -1204,8 +1127,6 @@ export function ChatScreen() {
       lastHandledPairingUrl = pairingUrl;
       isHandlingPairingLink = true;
       setPastePairing(true);
-      setPastedPairingPayload(pairingUrl);
-      setPairingEntryMode("scan");
       setPasteApprovalCode(undefined);
       setPasteApprovalServerUrl(undefined);
       try {
@@ -1260,7 +1181,6 @@ export function ChatScreen() {
 
   const presentScannedPairingApproval = useCallback(
     async (scanPairingGeneration: number, approvalCode: string, serverUrl: string) => {
-      setPairingEntryMode("scan");
       setPasteApprovalCode(approvalCode);
       setPasteApprovalServerUrl(serverUrl);
       setScannerMessage(approvalMessage(approvalCode, serverUrl));
@@ -1283,8 +1203,6 @@ export function ChatScreen() {
       scanPairingGenerationRef.current = scanPairingGeneration;
       isHandlingScanRef.current = true;
       setHandlingScan(true);
-      setPairingEntryMode("scan");
-      setPastedPairingPayload(typeof payload === "string" ? payload : "");
       setPasteApprovalCode(undefined);
       setPasteApprovalServerUrl(undefined);
       setScannerMessage("QR detected. Pairing...");
@@ -2013,7 +1931,6 @@ export function ChatScreen() {
     setCopyToast({ id: copyToastIdRef.current });
   }, []);
 
-  const isScannedPairing = pairingEntryMode === "scan";
   const isPairing = isPastePairing || isHandlingScan;
 
   return (
@@ -2034,7 +1951,6 @@ export function ChatScreen() {
                   hasPairedSession={hasPairedSession}
                   serverUrl={serverUrl}
                   workspacePath={workspacePath}
-                  onPastePayload={openPastePair}
                   onRefresh={refresh}
                   onScanConnect={openScanner}
                 />
@@ -2154,15 +2070,11 @@ export function ChatScreen() {
           <View style={styles.manualPanel}>
             <View style={styles.manualHeader}>
               <ThemedText type="smallBold" style={styles.manualTitle}>
-                {isScannedPairing
-                  ? pasteApprovalCode
-                    ? "Approve this device"
-                    : "Pairing"
-                  : "Paste QR payload"}
+                {pasteApprovalCode ? "Approve this phone" : "Pairing"}
               </ThemedText>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Close QR payload form"
+                accessibilityLabel="Close pairing status"
                 onPress={() => setPastePairOpen(false)}
                 style={({ pressed }) => [styles.manualButtonSecondary, pressed && styles.pressed]}
               >
@@ -2171,44 +2083,16 @@ export function ChatScreen() {
             </View>
             <View style={styles.manualFields}>
               <ThemedText type="small" themeColor="textSecondary">
-                {isScannedPairing
-                  ? pasteApprovalCode
-                    ? "Finish pairing from the server terminal on your computer."
-                    : "Pairing QR recognized. Connecting to the relay..."
-                  : "Paste the full codex-relay://pair payload printed below the QR."}
+                {pasteApprovalCode
+                  ? "Finish pairing from the Terminal window where codex-relay is running."
+                  : "QR recognized. Connecting to the relay..."}
               </ThemedText>
-              {isScannedPairing ? null : (
-                <>
-                  <TextInput
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    multiline
-                    keyboardType="default"
-                    placeholder="codex-relay://pair?serverUrl=..."
-                    placeholderTextColor="#7A8493"
-                    style={[styles.manualInput, styles.manualPayloadInput]}
-                    value={pastedPairingPayload}
-                    onChangeText={setPastedPairingPayload}
-                  />
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Paste QR payload from clipboard"
-                    onPress={pastePairPayloadFromClipboard}
-                    style={({ pressed }) => [
-                      styles.manualClipboardButton,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <ThemedText type="smallBold">Paste from Clipboard</ThemedText>
-                  </Pressable>
-                </>
-              )}
               {pasteApprovalCode ? (
                 <View style={styles.manualApproval}>
-                  <ThemedText type="smallBold">Pairing code</ThemedText>
+                  <ThemedText type="smallBold">Approval code</ThemedText>
                   <ThemedText style={styles.manualApprovalCode}>{pasteApprovalCode}</ThemedText>
                   <ThemedText type="small" themeColor="textSecondary">
-                    Run this in the server terminal:
+                    Run this on your computer:
                   </ThemedText>
                   <ThemedText style={styles.manualApprovalCommand}>
                     {approvalCommand(pasteApprovalCode, pasteApprovalServerUrl)}
@@ -2216,30 +2100,11 @@ export function ChatScreen() {
                 </View>
               ) : null}
             </View>
-            <Button
-              accessibilityRole="button"
-              accessibilityLabel="Pair with server"
-              disabled={isPairing}
-              onPress={submitPastedPair}
-              size="lg"
-              variant="default"
-              className="h-[54px] rounded-lg bg-primary"
-              style={({ pressed }) => [
-                styles.manualButtonPrimary,
-                isPairing && styles.manualButtonDisabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              <ThemedText type="smallBold" style={styles.manualButtonPrimaryText}>
-                {isScannedPairing || (isPastePairing && pasteApprovalCode)
-                  ? pasteApprovalCode
-                    ? "Waiting for approval"
-                    : "Pairing"
-                  : isPastePairing
-                    ? "Pairing"
-                    : "Pair"}
+            <View style={styles.manualStatus}>
+              <ThemedText type="smallBold" style={styles.manualStatusText}>
+                {pasteApprovalCode ? "Waiting for approval" : isPairing ? "Pairing" : "Ready"}
               </ThemedText>
-            </Button>
+            </View>
           </View>
         </SafeAreaView>
       </Modal>
@@ -2260,7 +2125,7 @@ export function ChatScreen() {
           <SafeAreaView edges={["top", "left", "right"]} style={styles.scannerOverlay}>
             <View style={styles.scannerHeader}>
               <ThemedText type="smallBold" style={styles.scannerTitle}>
-                {isHandlingScan ? "Pairing" : "Scan server QR"}
+                {isHandlingScan ? "Pairing" : "Scan connection QR"}
               </ThemedText>
               <Pressable
                 accessibilityRole="button"
@@ -2275,32 +2140,6 @@ export function ChatScreen() {
               <ThemedText type="smallBold" style={styles.scannerMessage}>
                 {scannerMessage}
               </ThemedText>
-              <Pressable
-                accessibilityRole="link"
-                accessibilityLabel="Open Codex Relay GitHub repository"
-                onPress={() => void Linking.openURL(codexRelayRepositoryUrl)}
-                style={({ pressed }) => [styles.scannerRepositoryLink, pressed && styles.pressed]}
-              >
-                <View style={styles.scannerRepositoryIcon}>
-                  <FaGithub size={14} color={Colors.dark.text} />
-                </View>
-                <ThemedText type="smallBold" style={styles.scannerRepositoryText}>
-                  Star on GitHub
-                </ThemedText>
-                <Star size={11} color={Colors.dark.text} fill={Colors.dark.text} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Paste QR payload instead"
-                onPress={() => {
-                  setScannerOpen(false);
-                  hapticSelection();
-                  void openPastePair();
-                }}
-                style={({ pressed }) => [styles.scannerCodeButton, pressed && styles.pressed]}
-              >
-                <ThemedText type="smallBold">Paste QR</ThemedText>
-              </Pressable>
             </View>
           </SafeAreaView>
         </View>
@@ -2712,41 +2551,6 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     textAlign: "center",
   },
-  scannerCodeButton: {
-    backgroundColor: "rgba(255, 255, 255, 0.88)",
-    borderRadius: 18,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  scannerRepositoryLink: {
-    alignItems: "center",
-    backgroundColor: Colors.dark.backgroundSelected,
-    borderColor: "rgba(255, 255, 255, 0.14)",
-    borderRadius: 18,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 7,
-    maxWidth: "100%",
-    minHeight: 34,
-    paddingLeft: 5,
-    paddingRight: Spacing.three,
-    paddingVertical: 4,
-  },
-  scannerRepositoryIcon: {
-    alignItems: "center",
-    backgroundColor: Colors.dark.backgroundElement,
-    borderRadius: 13,
-    height: 26,
-    justifyContent: "center",
-    width: 26,
-  },
-  scannerRepositoryText: {
-    color: Colors.dark.text,
-    flexShrink: 1,
-    fontSize: 12,
-    lineHeight: 16,
-    minWidth: 0,
-  },
   manualScreen: {
     backgroundColor: Colors.dark.background,
     flex: 1,
@@ -2766,33 +2570,6 @@ const styles = StyleSheet.create({
   },
   manualFields: {
     gap: Spacing.two,
-  },
-  manualInput: {
-    backgroundColor: Colors.dark.backgroundElement,
-    borderColor: "rgba(255, 255, 255, 0.12)",
-    borderRadius: 8,
-    borderWidth: 1,
-    color: Colors.dark.text,
-    fontFamily: Fonts.mono,
-    fontSize: 14,
-    minHeight: 48,
-    paddingHorizontal: Spacing.three,
-  },
-  manualPayloadInput: {
-    fontFamily: Fonts.monoMedium,
-    fontSize: 12,
-    minHeight: 160,
-    paddingVertical: Spacing.three,
-    textAlignVertical: "top",
-  },
-  manualClipboardButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.08)",
-    borderColor: "rgba(132, 145, 165, 0.24)",
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
   manualApproval: {
     backgroundColor: "rgba(255, 255, 255, 0.06)",
@@ -2814,17 +2591,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
-  manualButtonPrimary: {
-    borderRadius: 8,
-    borderColor: "rgba(255, 255, 255, 0.18)",
-    borderWidth: 1,
-    width: "100%",
-  },
-  manualButtonPrimaryText: {
-    color: "#141414",
-    fontSize: 15,
-    lineHeight: 20,
-  },
   manualButtonSecondary: {
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     borderColor: "rgba(132, 145, 165, 0.24)",
@@ -2833,7 +2599,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.one,
   },
-  manualButtonDisabled: {
-    opacity: 0.55,
+  manualStatus: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.12)",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 48,
+    justifyContent: "center",
+  },
+  manualStatusText: {
+    fontSize: 14,
+    lineHeight: 18,
   },
 });
