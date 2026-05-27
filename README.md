@@ -102,6 +102,17 @@ Example:
 CODEX_RELAY_PUBLIC_URL=http://<computer-ip>:8787 npx codex-relay@latest
 ```
 
+## Contributing
+
+Please use English as the default language for GitHub issues, pull requests,
+and maintainer-facing discussions. If English is difficult, start with a short
+English summary and then include the rest in the language you are most
+comfortable using.
+
+Before opening a connection issue, confirm the network checklist in the issue
+template. Most pairing failures happen because the phone cannot reach the relay
+URL printed by the computer.
+
 ## Common Commands
 
 | Command                                    | What it does                                        |
@@ -145,6 +156,17 @@ npx codex-relay@latest qr
 
 If the mobile app cannot connect, confirm that the phone can reach the printed
 `Mobile:` URL and that your firewall allows traffic on the relay port.
+
+Connection checklist:
+
+- Are the phone and computer on the same Wi-Fi or LAN?
+- If keeping the same network is difficult, are both devices connected through
+  Tailscale or another reachable private network?
+- Can the phone open the exact `Mobile:` URL printed by the relay?
+- Does the computer firewall allow inbound traffic on the relay port, usually
+  `8787`?
+- If the printed URL is not reachable, did you set `CODEX_RELAY_PUBLIC_URL` to
+  a reachable LAN, Tailscale, or tunnel URL?
 
 ## License
 

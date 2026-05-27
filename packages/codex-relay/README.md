@@ -145,3 +145,11 @@ kill -TERM <pid>
 ```
 
 If the mobile app cannot connect, confirm that the phone can reach the printed `Mobile:` URL and that the chosen port is not blocked by a firewall.
+
+Connection checklist:
+
+- Are the phone and computer on the same Wi-Fi or LAN?
+- If keeping the same network is difficult, are both devices connected through Tailscale or another reachable private network?
+- Can the phone open the exact `Mobile:` URL printed by the relay?
+- Does the computer firewall allow inbound traffic on the relay port, usually `8787`?
+- If the printed URL is not reachable, did you set `CODEX_RELAY_PUBLIC_URL` to a reachable LAN, Tailscale, or tunnel URL?
