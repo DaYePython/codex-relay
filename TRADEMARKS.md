@@ -10,3 +10,7 @@ official distribution, or affiliation.
 
 Third-party names, marks, and badges remain the property of their respective
 owners and may be subject to separate terms.
+
+Codex Relay is an independent project. It is not affiliated with, endorsed by,
+or sponsored by OpenAI or the OpenAI Codex team. OpenAI, Codex, and related
+names or marks belong to their respective owners.

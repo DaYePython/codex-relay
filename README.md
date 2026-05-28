@@ -30,6 +30,9 @@ Codex Relay is a mobile companion for the Codex CLI. It runs a local relay
 server in your workspace, pairs with the mobile app over your own network, and
 lets you follow or steer Codex sessions from your phone.
 
+Codex Relay is an independent project. It is not affiliated with, endorsed by,
+or sponsored by OpenAI or the OpenAI Codex team.
+
 The project is intentionally local-first. Your code, shell, git state, and
 Codex CLI session stay on your computer; the phone talks to the relay that you
 run.
