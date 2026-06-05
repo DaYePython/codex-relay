@@ -94,6 +94,7 @@ import {
   submitThreadInputServerState,
   updateRuntimePreferencesServerState,
 } from "@/lib/server-state";
+import { recordSuccessfulAiConversationForReviewPrompt } from "@/lib/store-review-prompt";
 import { completeThreadRunSession, handleThreadRunStreamEvent } from "@/lib/thread-run-stream";
 import { readCachedWorkspaceRuntimePreferences } from "@/lib/workspace-runtime-preferences-cache";
 import {
@@ -765,15 +766,17 @@ export function ChatScreen() {
                   [previewThreadId]: target,
                 }));
               },
-              onTerminal(terminalThreadId) {
+              onTerminal(terminalThreadId, terminalEvent) {
                 sawTerminalStreamEvent = true;
                 completeThreadRunSession({
                   threadId: terminalThreadId,
                   clearQueuedPrompts,
+                  onSuccessfulCompletion: recordSuccessfulAiConversationForReviewPrompt,
                   setQueuedInputs: (queuedThreadId, inputs) =>
                     setQueuedInputsState(queryClient, queuedThreadId, inputs),
                   setRunning: (isRunning) =>
                     setThreadRunningState(queryClient, terminalThreadId, isRunning),
+                  terminalEvent,
                   refreshUsageStatus,
                 });
               },
@@ -1453,15 +1456,17 @@ export function ChatScreen() {
                   [previewThreadId]: target,
                 }));
               },
-              onTerminal(terminalThreadId) {
+              onTerminal(terminalThreadId, terminalEvent) {
                 sawTerminalStreamEvent = true;
                 completeThreadRunSession({
                   threadId: terminalThreadId,
                   clearQueuedPrompts,
+                  onSuccessfulCompletion: recordSuccessfulAiConversationForReviewPrompt,
                   setQueuedInputs: (queuedThreadId, inputs) =>
                     setQueuedInputsState(queryClient, queuedThreadId, inputs),
                   setRunning: (isRunning) =>
                     setThreadRunningState(queryClient, terminalThreadId, isRunning),
+                  terminalEvent,
                   refreshUsageStatus,
                 });
               },

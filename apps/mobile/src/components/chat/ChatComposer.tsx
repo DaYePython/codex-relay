@@ -1193,7 +1193,7 @@ const SkillSuggestionPanel = memo(function SkillSuggestionPanel({
           contentContainerStyle={styles.skillListContent}
           data={skills}
           estimatedItemSize={SUGGESTION_ROW_ESTIMATED_SIZE}
-          getEstimatedItemSize={getSuggestionRowSize}
+          getFixedItemSize={getSuggestionRowSize}
           keyExtractor={skillSuggestionKeyExtractor}
           keyboardShouldPersistTaps="always"
           nestedScrollEnabled
@@ -1300,7 +1300,7 @@ const FileSuggestionPanel = memo(function FileSuggestionPanel({
           contentContainerStyle={styles.skillListContent}
           data={files}
           estimatedItemSize={SUGGESTION_ROW_ESTIMATED_SIZE}
-          getEstimatedItemSize={getSuggestionRowSize}
+          getFixedItemSize={getSuggestionRowSize}
           keyExtractor={fileSuggestionKeyExtractor}
           keyboardShouldPersistTaps="always"
           nestedScrollEnabled

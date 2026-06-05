@@ -24,9 +24,11 @@ export type HandleThreadRunStreamEventOptions = {
 export type CompleteThreadRunSessionOptions = {
   clearQueuedPrompts: (threadId: string) => void;
   closeStream?: () => void;
+  onSuccessfulCompletion?: () => void;
   refreshUsageStatus: (threadId: string) => void | Promise<void>;
   setQueuedInputs: (threadId: string, inputs: QueuedThreadInput[]) => void;
   setRunning: (isRunning: boolean) => void;
+  terminalEvent?: StreamThreadRunEvent;
   threadId: string;
 };
 
@@ -129,6 +131,10 @@ export function isTerminalThreadRunEvent(event: StreamThreadRunEvent) {
   return event.type === "thread.state.changed" && event.thread.state !== "running";
 }
 
+export function isSuccessfulThreadRunTerminalEvent(event: StreamThreadRunEvent) {
+  return event.type === "thread.state.changed" && event.thread.state === "completed";
+}
+
 export function handleThreadRunStreamEvent(
   event: StreamThreadRunEvent,
   options: HandleThreadRunStreamEventOptions,
@@ -148,6 +154,9 @@ export function completeThreadRunSession(options: CompleteThreadRunSessionOption
   options.setRunning(false);
   options.clearQueuedPrompts(options.threadId);
   options.setQueuedInputs(options.threadId, []);
+  if (options.terminalEvent && isSuccessfulThreadRunTerminalEvent(options.terminalEvent)) {
+    options.onSuccessfulCompletion?.();
+  }
   void Promise.resolve(options.refreshUsageStatus(options.threadId)).catch(() => undefined);
 }
 

@@ -1,18 +1,14 @@
 import type { ChatMessage } from "codex-relay/api-schema";
 import {
-  LegendList,
   type LegendListRef,
   type LegendListRenderItemProps,
   type MaintainScrollAtEndOptions,
   type MaintainVisibleContentPositionConfig,
 } from "@legendapp/list/react-native";
-import { useCallback, useEffect, useRef, useState, type ElementRef, type Ref } from "react";
-import { ActivityIndicator, View, type ScrollViewProps } from "react-native";
+import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import {
-  KeyboardChatScrollView,
-  type KeyboardChatScrollViewProps,
-} from "react-native-keyboard-controller";
 import Animated, {
   Easing,
   FadeIn,
@@ -32,20 +28,7 @@ import { Colors, Spacing } from "@/constants/theme";
 import { MessageBubble } from "./MessageBubble";
 import type { WorkspaceMarkdownPreviewTarget } from "./workspace-preview/markdown-target";
 
-type KeyboardListScrollViewProps = ScrollViewProps & KeyboardChatScrollViewProps;
-
-const MESSAGE_CONTAINER_POOL_RATIO = 8;
 const MESSAGE_ESTIMATED_ITEM_SIZE = 48;
-const META_MESSAGE_ESTIMATED_ITEM_SIZE = 36;
-const USER_MESSAGE_ESTIMATED_ITEM_SIZE = 52;
-const USER_MESSAGE_IMAGE_ESTIMATED_SIZE = 178;
-const MESSAGE_DOCUMENT_ESTIMATED_ITEM_SIZE = 74;
-const PROTOCOL_MESSAGE_ESTIMATED_ITEM_SIZE = 76;
-const FILE_CHANGE_MESSAGE_ESTIMATED_ITEM_SIZE = 96;
-const PLAN_MESSAGE_ESTIMATED_ITEM_SIZE = 160;
-const ASSISTANT_LINE_HEIGHT = 21;
-const ASSISTANT_ESTIMATED_CHARS_PER_LINE = 38;
-const ASSISTANT_MAX_ESTIMATED_ITEM_SIZE = 900;
 const RUNNING_PULSE_HALF_DURATION_MS = 760;
 const RUNNING_DOT_STAGGER_MS = RUNNING_PULSE_HALF_DURATION_MS / 3;
 const MAINTAIN_SCROLL_AT_END: MaintainScrollAtEndOptions = {
@@ -64,28 +47,6 @@ const MAINTAIN_SCROLL_AT_END_THRESHOLD = 0.1;
 const TIMELINE_LOADING_ENTER = FadeIn.duration(140).easing(Easing.out(Easing.cubic));
 const TIMELINE_LOADING_EXIT = FadeOut.duration(120).easing(Easing.out(Easing.cubic));
 const TIMELINE_CONTENT_SETTLE_OFFSET = 10;
-
-function KeyboardListScrollView({
-  ref,
-  ...props
-}: KeyboardListScrollViewProps & {
-  ref?: Ref<ElementRef<typeof KeyboardChatScrollView>>;
-}) {
-  const { bottom } = useSafeAreaInsets();
-
-  return (
-    <KeyboardChatScrollView
-      ref={ref}
-      automaticallyAdjustContentInsets={false}
-      contentInsetAdjustmentBehavior="never"
-      keyboardDismissMode="interactive"
-      keyboardLiftBehavior="whenAtEnd"
-      offset={bottom - 24}
-      scrollEventThrottle={48}
-      {...props}
-    />
-  );
-}
 
 export function MessageTimeline({
   bottomAccessoryHeight = 0,
@@ -109,6 +70,7 @@ export function MessageTimeline({
   threadId?: string;
 }) {
   const listRef = useRef<LegendListRef | null>(null);
+  const { bottom } = useSafeAreaInsets();
   const rows = messages;
   const timelineKey = threadId ?? "no-thread";
   const [settledTimelineKey, setSettledTimelineKey] = useState<string | undefined>(undefined);
@@ -172,16 +134,6 @@ export function MessageTimeline({
     ),
     [onMessageCopied, onOpenMarkdownAttachment],
   );
-  const renderScrollComponent = useCallback(
-    (props: ScrollViewProps) => (
-      <KeyboardListScrollView
-        {...props}
-        extraContentPadding={extraContentPadding}
-        freeze={keyboardLayoutFrozen}
-      />
-    ),
-    [extraContentPadding, keyboardLayoutFrozen],
-  );
   const handleTimelineLoad = useCallback(() => {
     requestAnimationFrame(() => {
       setSettledTimelineKey(timelineKey);
@@ -201,27 +153,31 @@ export function MessageTimeline({
           </Animated.View>
         ) : (
           <Animated.View style={[styles.transitionScene, timelineContentStyle]}>
-            <LegendList
+            <KeyboardAwareLegendList
               key={timelineKey}
               ref={listRef}
               alignItemsAtEnd
+              automaticallyAdjustContentInsets={false}
+              contentInsetAdjustmentBehavior="never"
+              contentInsetEndAdjustment={extraContentPadding}
               data={rows}
               estimatedItemSize={MESSAGE_ESTIMATED_ITEM_SIZE}
-              getEstimatedItemSize={estimateMessageItemSize}
+              freeze={keyboardLayoutFrozen}
               getItemType={messageItemType}
-              initialContainerPoolRatio={MESSAGE_CONTAINER_POOL_RATIO}
               initialScrollAtEnd
               keyExtractor={messageKeyExtractor}
               renderItem={renderMessage}
               contentContainerStyle={styles.content}
               keyboardDismissMode="interactive"
+              keyboardLiftBehavior="whenAtEnd"
+              keyboardOffset={bottom - 24}
               keyboardShouldPersistTaps="handled"
               maintainScrollAtEnd={MAINTAIN_SCROLL_AT_END}
               maintainScrollAtEndThreshold={MAINTAIN_SCROLL_AT_END_THRESHOLD}
               maintainVisibleContentPosition={MAINTAIN_VISIBLE_CONTENT_POSITION}
               onLoad={handleTimelineLoad}
               recycleItems={false}
-              renderScrollComponent={renderScrollComponent}
+              scrollEventThrottle={48}
               showsVerticalScrollIndicator={false}
               style={styles.list}
               ListFooterComponent={
@@ -274,116 +230,6 @@ function LoadingConversation() {
       </ThemedText>
     </View>
   );
-}
-
-function estimateMessageItemSize(message: ChatMessage) {
-  if (message.kind === "plan") {
-    return PLAN_MESSAGE_ESTIMATED_ITEM_SIZE;
-  }
-
-  if (message.kind === "fileChange") {
-    const changes = Array.isArray(message.details?.changes) ? message.details.changes.length : 1;
-    return FILE_CHANGE_MESSAGE_ESTIMATED_ITEM_SIZE + Math.max(1, changes) * 38;
-  }
-
-  if (message.role === "status" || message.role === "tool" || message.role === "reasoning") {
-    return META_MESSAGE_ESTIMATED_ITEM_SIZE;
-  }
-
-  if (message.kind !== "chat" && message.kind !== "unknown") {
-    return PROTOCOL_MESSAGE_ESTIMATED_ITEM_SIZE;
-  }
-
-  if (message.role === "user") {
-    return (
-      USER_MESSAGE_ESTIMATED_ITEM_SIZE + estimateAttachmentItemSize(message.details?.attachments)
-    );
-  }
-
-  if (message.role === "assistant") {
-    const attachmentSize = estimateAttachmentItemSize(message.details?.attachments);
-    const estimatedLines = Math.max(
-      1,
-      Math.ceil((message.content || " ").length / ASSISTANT_ESTIMATED_CHARS_PER_LINE),
-    );
-    return (
-      attachmentSize +
-      Math.min(
-        ASSISTANT_MAX_ESTIMATED_ITEM_SIZE,
-        MESSAGE_ESTIMATED_ITEM_SIZE + estimatedLines * ASSISTANT_LINE_HEIGHT,
-      )
-    );
-  }
-
-  return MESSAGE_ESTIMATED_ITEM_SIZE;
-}
-
-function estimateAttachmentItemSize(value: unknown) {
-  const imageCount = messageImageAttachmentCount(value);
-  const documentCount = messageDocumentAttachmentCount(value);
-  const imageRows = imageCount > 0 ? Math.ceil(Math.min(imageCount, 3) / 2) : 0;
-  return (
-    imageRows * USER_MESSAGE_IMAGE_ESTIMATED_SIZE +
-    documentCount * MESSAGE_DOCUMENT_ESTIMATED_ITEM_SIZE
-  );
-}
-
-function messageImageAttachmentCount(value: unknown) {
-  if (!Array.isArray(value)) {
-    return 0;
-  }
-
-  return value.filter((attachment) => {
-    if (!attachment || typeof attachment !== "object") {
-      return false;
-    }
-    return isImageAttachment(attachment);
-  }).length;
-}
-
-function messageDocumentAttachmentCount(value: unknown) {
-  if (!Array.isArray(value)) {
-    return 0;
-  }
-
-  return value.filter((attachment) => {
-    if (!attachment || typeof attachment !== "object" || isImageAttachment(attachment)) {
-      return false;
-    }
-    const type = attachmentStringValue(attachment, "type")?.toLowerCase();
-    const mimeType = attachmentStringValue(attachment, "mimeType")?.toLowerCase();
-    const name = attachmentStringValue(attachment, "name");
-    const path = attachmentStringValue(attachment, "path");
-    const url = attachmentStringValue(attachment, "url");
-    return (
-      type === "document" ||
-      type === "file" ||
-      type === "localfile" ||
-      mimeType === "text/markdown" ||
-      mimeType === "text/x-markdown" ||
-      mimeType === "application/markdown" ||
-      Boolean((name ?? path ?? url ?? "").match(/\.(md|mdx|markdown)(?:\?|$)/i))
-    );
-  }).length;
-}
-
-function isImageAttachment(attachment: object) {
-  const type = attachmentStringValue(attachment, "type")?.toLowerCase();
-  const mimeType = attachmentStringValue(attachment, "mimeType")?.toLowerCase();
-  const name = attachmentStringValue(attachment, "name");
-  const path = attachmentStringValue(attachment, "path");
-  const url = attachmentStringValue(attachment, "url");
-  return (
-    type === "image" ||
-    Boolean(mimeType?.startsWith("image/")) ||
-    Boolean(url?.startsWith("data:image/")) ||
-    Boolean((name ?? path ?? url ?? "").match(/\.(gif|heic|heif|jpe?g|png|webp)(?:\?|$)/i))
-  );
-}
-
-function attachmentStringValue(attachment: object, key: string) {
-  const value = (attachment as Record<string, unknown>)[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 export function implementablePlanId(messages: ChatMessage[]) {
