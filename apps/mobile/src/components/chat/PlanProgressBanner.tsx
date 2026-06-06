@@ -76,7 +76,9 @@ export function PlanProgressBanner({ progress }: { progress?: TimelinePlanProgre
               accessibilityLabel={`${planProgressStatusLabel(step.status)}: ${step.text}`}
               style={styles.stepRow}
             >
-              <PlanProgressMarker status={step.status} />
+              <View style={styles.stepMarkerSlot}>
+                <PlanProgressMarker status={step.status} />
+              </View>
               <ThemedText
                 numberOfLines={2}
                 type="small"
@@ -203,8 +205,11 @@ const styles = StyleSheet.create({
   stepRow: {
     alignItems: "flex-start",
     flexDirection: "row",
-    gap: Spacing.two,
+    gap: 7,
     minHeight: 22,
+  },
+  stepMarkerSlot: {
+    paddingTop: 2,
   },
   stepText: {
     color: Colors.dark.text,
@@ -217,7 +222,7 @@ const styles = StyleSheet.create({
   summaryRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: Spacing.two,
+    gap: 7,
   },
   summaryContent: {
     gap: 2,
