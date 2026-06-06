@@ -11,12 +11,13 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { DarkTheme, ThemeProvider } from "expo-router/react-navigation";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Text, TextInput } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { AnimatedSplashOverlay } from "@/components/animated-icon";
+import { AppToast } from "@/components/ui/toast";
 import { addHotUpdaterLog, formatHotUpdaterProgress } from "@/lib/hot-updater-logs";
 import {
   persistedQueryMaxAgeMs,
@@ -24,6 +25,11 @@ import {
   shouldPersistQuery,
 } from "@/lib/query-persistence";
 import { restoreChatStoreFromQueryCache } from "@/lib/server-state-hydration";
+import {
+  consumeInactiveSessionExpiredNotice,
+  inactiveSessionExpiredToastCopy,
+  subscribeInactiveSessionExpired,
+} from "@/lib/session-expiration";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -119,6 +125,7 @@ function TabLayout() {
     GeistMono: require("../../assets/fonts/GeistMono-Regular.ttf"),
     "GeistMono-Medium": require("../../assets/fonts/GeistMono-Medium.ttf"),
   });
+  const [inactiveSessionToastId, setInactiveSessionToastId] = useState<number | undefined>();
 
   useEffect(() => {
     if (fontsLoaded) {
@@ -134,6 +141,17 @@ function TabLayout() {
     void checkForLaunchUpdate().catch(() => undefined);
 
     return unsubscribeProgress;
+  }, []);
+
+  useEffect(() => {
+    const showInactiveSessionExpiredToast = () => {
+      if (consumeInactiveSessionExpiredNotice()) {
+        setInactiveSessionToastId((current) => (current ?? 0) + 1);
+      }
+    };
+
+    showInactiveSessionExpiredToast();
+    return subscribeInactiveSessionExpired(showInactiveSessionExpiredToast);
   }, []);
 
   if (!fontsLoaded) {
@@ -194,6 +212,15 @@ function TabLayout() {
                 />
               </Stack>
               <PortalHost />
+              {inactiveSessionToastId ? (
+                <AppToast
+                  key={`inactive-session-expired-${inactiveSessionToastId}`}
+                  title={inactiveSessionExpiredToastCopy.title}
+                  message={inactiveSessionExpiredToastCopy.message}
+                  visible
+                  onDismiss={() => setInactiveSessionToastId(undefined)}
+                />
+              ) : null}
             </BottomSheetModalProvider>
           </KeyboardProvider>
         </GestureHandlerRootView>
