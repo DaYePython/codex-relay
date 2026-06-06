@@ -16,10 +16,6 @@ import type {
   UpdateThreadGoalRequest,
   VersionResponse,
 } from "codex-relay/api-schema";
-import {
-  chatMessageDetailsFromPromptContext,
-  promptMarkdownWithSkills,
-} from "codex-relay/api-schema";
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
 import {
@@ -50,10 +46,14 @@ import {
   cacheWorkspaceRuntimePreferences,
   cacheWorkspaceRuntimePreferencesFromStatus,
 } from "@/lib/workspace-runtime-preferences-cache";
+import {
+  appendOptimisticSteeringMessageToDetail,
+  mergeThreadDetailState,
+  upsertMessage,
+} from "./server-state-messages";
 
 const rootKey = "codex-relay-server-state";
 const persistableServerStateScopes = new Set(["models", "status", "threads"]);
-const optimisticSteeringMessageIdPrefix = "optimistic-steering:";
 
 export const serverStateKeys = {
   all: () => [rootKey, getCodexRelayServerUrl()] as const,
@@ -507,6 +507,7 @@ export function removeQueuedInputState(
 }
 
 export type OptimisticSteerQueuedInputSnapshot = {
+  hadThreadDetail: boolean;
   queuedInputs?: ListQueuedThreadInputsResponse;
   threadDetail?: ThreadDetailResponse;
   threads?: ListThreadsResponse;
@@ -522,6 +523,11 @@ export async function optimisticallySteerQueuedInputState(
     queryClient.cancelQueries({ queryKey: serverStateKeys.thread(threadId) }),
   ]);
   const snapshot: OptimisticSteerQueuedInputSnapshot = {
+    hadThreadDetail: queryClient.getQueryData<ThreadDetailResponse>(
+      serverStateKeys.thread(threadId),
+    )
+      ? true
+      : false,
     queuedInputs: queryClient.getQueryData<ListQueuedThreadInputsResponse>(
       serverStateKeys.queuedInputs(threadId),
     ),
@@ -547,6 +553,8 @@ export function restoreOptimisticSteerQueuedInputState(
   }
   if (snapshot.threadDetail) {
     queryClient.setQueryData(serverStateKeys.thread(threadId), snapshot.threadDetail);
+  } else if (!snapshot.hadThreadDetail) {
+    queryClient.removeQueries({ queryKey: serverStateKeys.thread(threadId) });
   }
   if (snapshot.threads) {
     queryClient.setQueryData(serverStateKeys.threads(), snapshot.threads);
@@ -639,130 +647,25 @@ function appendOptimisticSteeringMessageState(
   input: QueuedThreadInput,
 ) {
   queryClient.setQueryData<ThreadDetailResponse>(serverStateKeys.thread(threadId), (current) => {
-    if (!current) {
-      return current;
-    }
-    const message: ChatMessage = {
-      id: optimisticSteeringMessageId(input.id),
+    return appendOptimisticSteeringMessageToDetail(current, {
+      input,
+      nowIso: new Date().toISOString(),
+      thread: optimisticSteeringThread(queryClient, threadId),
       threadId,
-      role: "user",
-      kind: "chat",
-      content: promptMarkdownWithSkills(input.prompt, input.skills),
-      createdAt: new Date().toISOString(),
-      details: chatMessageDetailsFromPromptContext(input, { optimisticQueuedInputId: input.id }),
-      state: "completed",
-    };
-    return {
-      ...current,
-      messages: upsertMessage(current.messages, message),
-    };
+    });
   });
 }
 
-function optimisticSteeringMessageId(inputId: string) {
-  return `${optimisticSteeringMessageIdPrefix}${inputId}`;
-}
-
-function mergeThreadDetailState(
-  current: ThreadDetailResponse | undefined,
-  response: ThreadDetailResponse,
-) {
-  if (!current || current.thread.id !== response.thread.id || current.messages.length === 0) {
-    return response;
-  }
-  const messages = mergeMessages(current.messages, response.messages);
-  return {
-    ...response,
-    messages,
-  };
-}
-
-function mergeMessages(baseMessages: ChatMessage[], incomingMessages: ChatMessage[]) {
-  const incomingById = new Map(incomingMessages.map((message) => [message.id, message]));
-  const indexesById = new Map<string, number>();
-  const seenIds = new Set<string>();
-  const messages: ChatMessage[] = [];
-  for (const candidate of [...baseMessages, ...incomingMessages]) {
-    const message = incomingById.get(candidate.id) ?? candidate;
-    if (seenIds.has(message.id)) {
-      continue;
-    }
-    const replacementId = replacementMessageId(message);
-    if (replacementId) {
-      const replacementIndex = indexesById.get(replacementId);
-      if (replacementIndex !== undefined) {
-        messages[replacementIndex] = message;
-        seenIds.delete(replacementId);
-        seenIds.add(message.id);
-        indexesById.delete(replacementId);
-        indexesById.set(message.id, replacementIndex);
-        continue;
-      }
-    }
-    const lastMessage = messages[messages.length - 1];
-    if (isDuplicateOptimisticQueuedMessage(lastMessage, message)) {
-      messages[messages.length - 1] = message;
-      seenIds.delete(lastMessage.id);
-      seenIds.add(message.id);
-      indexesById.delete(lastMessage.id);
-      indexesById.set(message.id, messages.length - 1);
-      continue;
-    }
-    seenIds.add(message.id);
-    indexesById.set(message.id, messages.length);
-    messages.push(message);
-  }
-  return messages;
-}
-
-function upsertMessage(messages: ChatMessage[], message: ChatMessage) {
-  const existingIndex = messages.findIndex((candidate) => candidate.id === message.id);
-  if (existingIndex !== -1) {
-    return messages.map((candidate) => (candidate.id === message.id ? message : candidate));
-  }
-  const replacementId = replacementMessageId(message);
-  const replacementIndex = replacementId
-    ? messages.findIndex((candidate) => candidate.id === replacementId)
-    : -1;
-  if (replacementIndex !== -1) {
-    return messages.map((candidate, index) => (index === replacementIndex ? message : candidate));
-  }
-  const optimisticIndex =
-    message.role === "user"
-      ? messages.findIndex(
-          (candidate) =>
-            candidate.id.startsWith(optimisticSteeringMessageIdPrefix) &&
-            candidate.role === "user" &&
-            candidate.content === message.content,
-        )
-      : -1;
-  if (optimisticIndex !== -1) {
-    return messages.map((candidate, index) => (index === optimisticIndex ? message : candidate));
-  }
-  const lastMessage = messages[messages.length - 1];
-  if (isDuplicateOptimisticQueuedMessage(lastMessage, message)) {
-    return messages.map((candidate, index) =>
-      index === messages.length - 1 ? message : candidate,
-    );
-  }
-  return [...messages, message];
-}
-
-function isDuplicateOptimisticQueuedMessage(
-  previous: ChatMessage | undefined,
-  incoming: ChatMessage,
-) {
+function optimisticSteeringThread(queryClient: QueryClient, threadId: string) {
+  const detailThread = queryClient.getQueryData<ThreadDetailResponse>(
+    serverStateKeys.thread(threadId),
+  )?.thread;
   return (
-    previous?.id.startsWith(optimisticSteeringMessageIdPrefix) === true &&
-    previous.threadId === incoming.threadId &&
-    previous.role === incoming.role &&
-    previous.content === incoming.content
+    detailThread ??
+    queryClient
+      .getQueryData<ListThreadsResponse>(serverStateKeys.threads())
+      ?.threads.find((thread) => thread.id === threadId)
   );
-}
-
-function replacementMessageId(message: ChatMessage) {
-  const replacementId = message.details?.replacesMessageId;
-  return typeof replacementId === "string" && replacementId.length > 0 ? replacementId : undefined;
 }
 
 function appendMessageDeltaState(
