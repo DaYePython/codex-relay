@@ -33,7 +33,11 @@ export function PlanProgressBanner({ progress }: { progress?: TimelinePlanProgre
   const activeStep = activePlanProgressStep(progress);
 
   return (
-    <Animated.View entering={FadeIn.duration(160)} layout={planProgressLayoutTransition}>
+    <Animated.View
+      entering={FadeIn.duration(160)}
+      layout={planProgressLayoutTransition}
+      style={styles.bannerHost}
+    >
       <Pressable
         accessibilityLabel={`Plan progress: ${completedStepCount} of ${stepCount} steps completed`}
         accessibilityRole="button"
@@ -46,7 +50,9 @@ export function PlanProgressBanner({ progress }: { progress?: TimelinePlanProgre
         style={({ pressed }) => [styles.banner, pressed && styles.bannerPressed]}
       >
         <View style={styles.summaryRow}>
-          {activeStep ? <PlanProgressMarker status={activeStep.status} /> : null}
+          <View style={styles.summaryMarkerSlot}>
+            {activeStep ? <PlanProgressMarker status={activeStep.status} /> : null}
+          </View>
           <View style={styles.titleGroup}>
             <ThemedText type="code" style={styles.label}>
               Plan
@@ -66,29 +72,29 @@ export function PlanProgressBanner({ progress }: { progress?: TimelinePlanProgre
             />
           </View>
         </View>
-
-        {isExpanded ? (
-          <View style={styles.steps}>
-            {progress.steps.map((step) => (
-              <View
-                key={step.id}
-                accessible
-                accessibilityLabel={`${planProgressStatusLabel(step.status)}: ${step.text}`}
-                style={styles.stepRow}
-              >
-                <PlanProgressMarker status={step.status} />
-                <ThemedText
-                  numberOfLines={2}
-                  type="small"
-                  style={[styles.stepText, step.status === "pending" && styles.stepTextPending]}
-                >
-                  {step.text}
-                </ThemedText>
-              </View>
-            ))}
-          </View>
-        ) : null}
       </Pressable>
+
+      {isExpanded ? (
+        <Animated.View entering={FadeIn.duration(120)} style={styles.expandedPanel}>
+          {progress.steps.map((step) => (
+            <View
+              key={step.id}
+              accessible
+              accessibilityLabel={`${planProgressStatusLabel(step.status)}: ${step.text}`}
+              style={styles.stepRow}
+            >
+              <PlanProgressMarker status={step.status} />
+              <ThemedText
+                numberOfLines={2}
+                type="small"
+                style={[styles.stepText, step.status === "pending" && styles.stepTextPending]}
+              >
+                {step.text}
+              </ThemedText>
+            </View>
+          ))}
+        </Animated.View>
+      ) : null}
     </Animated.View>
   );
 }
@@ -145,11 +151,15 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.1)",
     borderRadius: 10,
     borderWidth: 1,
-    gap: Spacing.two,
-    marginBottom: Spacing.two,
-    marginHorizontal: Spacing.four,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
+  },
+  bannerHost: {
+    elevation: 20,
+    marginBottom: Spacing.two,
+    marginHorizontal: Spacing.four,
+    position: "relative",
+    zIndex: 20,
   },
   bannerPressed: {
     opacity: 0.78,
@@ -158,9 +168,26 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
     fontSize: 11,
   },
+  expandedPanel: {
+    backgroundColor: "rgba(42, 42, 42, 0.96)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 10,
+    borderWidth: 1,
+    elevation: 20,
+    gap: Spacing.one,
+    left: 0,
+    marginTop: Spacing.one,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    position: "absolute",
+    right: 0,
+    top: "100%",
+    zIndex: 20,
+  },
   label: {
     color: "#9B8BD4",
     fontSize: 12,
+    lineHeight: 16,
   },
   marker: {
     alignItems: "center",
@@ -199,20 +226,26 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
   },
   summaryRow: {
-    alignItems: "center",
+    alignItems: "flex-start",
     flexDirection: "row",
     gap: Spacing.two,
   },
+  summaryMarkerSlot: {
+    paddingTop: 20,
+    width: 14,
+  },
   summaryText: {
     color: Colors.dark.text,
-    lineHeight: 18,
+    lineHeight: 20,
   },
   titleGroup: {
     flex: 1,
+    gap: 2,
     minWidth: 0,
   },
   trailingGroup: {
     alignItems: "center",
+    alignSelf: "center",
     flexDirection: "row",
     gap: Spacing.one,
   },
