@@ -42,7 +42,7 @@ export function PlanProgressBanner({ progress }: { progress?: TimelinePlanProgre
           hapticSelection();
           setExpanded((current) => !current);
         }}
-        style={({ pressed }) => [styles.banner, pressed && styles.bannerPressed]}
+        style={() => [styles.banner]}
       >
         <View style={styles.summaryContent}>
           <ThemedText type="code" style={styles.label}>
