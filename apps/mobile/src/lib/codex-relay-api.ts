@@ -93,7 +93,11 @@ import {
   parseThreadRunStreamPayload,
   threadRunStreamEventTypes,
 } from "./thread-run-stream";
-import { isClientTokenExpiredByInactivity, markInactiveSessionExpired } from "./session-expiration";
+import {
+  isClientTokenExpiredByInactivity,
+  markInactiveSessionExpired,
+  shouldClearClientSessionForInvalidStatus,
+} from "./session-expiration";
 
 const defaultServerUrl = "http://localhost:8787";
 const skillsPath = "/v1/skills";
@@ -219,10 +223,12 @@ function clearClientSession(reason: ClientSessionClearReason) {
   }
 }
 
-function clearInvalidClientSession() {
-  const reason = isClientTokenExpiredByInactivity(storage.getString(clientTokenExpiresAtStorageKey))
-    ? "inactive-expired"
-    : "invalid";
+function clearInvalidClientSession(status: number) {
+  const expiresAt = storage.getString(clientTokenExpiresAtStorageKey);
+  if (!shouldClearClientSessionForInvalidStatus(status, expiresAt)) {
+    return;
+  }
+  const reason = isClientTokenExpiredByInactivity(expiresAt) ? "inactive-expired" : "invalid";
   clearClientSession(reason);
 }
 
@@ -452,7 +458,7 @@ export async function refreshSession() {
 
   if (!response.ok) {
     if (isSessionInvalidStatus(response.status)) {
-      clearInvalidClientSession();
+      clearInvalidClientSession(response.status);
     }
     throw new Error(
       errorMessage(responsePayload, `Codex Relay server returned ${response.status}`),
@@ -859,7 +865,7 @@ export function streamWorkspaceTerminalOutput(
       }
       if (!response.ok) {
         if (isSessionInvalidStatus(response.status)) {
-          clearInvalidClientSession();
+          clearInvalidClientSession(response.status);
         }
         void response.text().then((text) => {
           let payload: unknown = text;
@@ -992,7 +998,7 @@ async function requestNoContent(path: string, init: RequestInit) {
 
   const payload = decryptResponsePayload(await response.json().catch(() => undefined));
   if (isSessionInvalidStatus(response.status)) {
-    clearInvalidClientSession();
+    clearInvalidClientSession(response.status);
   }
   const message = errorMessage(payload, `Codex Relay server returned ${response.status}`);
   throw new CodexRelayApiError(message, response.status, errorCode(payload));
@@ -1173,7 +1179,7 @@ function streamThreadRunWithDirectFetch(
       }
       if (!response.ok) {
         if (isSessionInvalidStatus(response.status)) {
-          clearInvalidClientSession();
+          clearInvalidClientSession(response.status);
         }
         void response.text().then((text) => {
           let payload: unknown = text;
@@ -1347,7 +1353,7 @@ async function request<T>(
 
   if (!response.ok) {
     if (isSessionInvalidStatus(response.status)) {
-      clearInvalidClientSession();
+      clearInvalidClientSession(response.status);
     }
     const message = errorMessage(payload, `Codex Relay server returned ${response.status}`);
     throw new CodexRelayApiError(message, response.status, errorCode(payload));

@@ -20,6 +20,14 @@ export function isClientTokenExpiredByInactivity(
   return Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
 }
 
+export function shouldClearClientSessionForInvalidStatus(
+  status: number,
+  expiresAt: string | undefined,
+  nowMs = Date.now(),
+) {
+  return status === 410 || isClientTokenExpiredByInactivity(expiresAt, nowMs);
+}
+
 export function markInactiveSessionExpired() {
   if (inactiveSessionExpiredNoticePending) {
     return;
