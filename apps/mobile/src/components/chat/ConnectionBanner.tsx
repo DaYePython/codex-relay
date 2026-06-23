@@ -145,16 +145,18 @@ export function ConnectionBanner({
                 Scan QR
               </ThemedText>
             </Button>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Refresh connection"
-              onPress={onRefresh}
-              style={({ pressed }) => [styles.refreshAction, pressed && styles.pressed]}
-            >
-              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.refreshText}>
-                Refresh connection
-              </ThemedText>
-            </Pressable>
+            {hasPairedSession ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh connection"
+                onPress={onRefresh}
+                style={({ pressed }) => [styles.refreshAction, pressed && styles.pressed]}
+              >
+                <ThemedText type="smallBold" themeColor="textSecondary" style={styles.refreshText}>
+                  Refresh connection
+                </ThemedText>
+              </Pressable>
+            ) : null}
           </View>
         </Animated.View>
       </Animated.View>

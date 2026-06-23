@@ -32,6 +32,8 @@ import {
   WorkspaceFileContentResponseSchema,
   WorkspaceChangesResponseSchema,
   WorkspaceGitActionResponseSchema,
+  WorkspaceTailscaleServeRequestSchema,
+  WorkspaceTailscaleServeResponseSchema,
   WorkspaceTerminalOutputResponseSchema,
   WorkspaceTerminalSessionResponseSchema,
   apiPaths,
@@ -71,12 +73,13 @@ import {
   type WorkspaceChangesResponse,
   type WorkspaceGitActionResponse,
   type WorkspaceSelectionRequest,
+  type WorkspaceTailscaleServeRequest,
+  type WorkspaceTailscaleServeResponse,
   type WorkspaceTerminalOutputResponse,
   type WorkspaceTerminalSessionResponse,
 } from "codex-relay/api-schema";
 import { Platform } from "react-native";
 import { dfetch, dfetchStream } from "react-native-direct-fetch";
-import { createMMKV } from "react-native-mmkv";
 import { fetch as nitroFetch } from "react-native-nitro-fetch";
 import EventSource from "react-native-sse";
 import {
@@ -98,8 +101,22 @@ import {
   markInactiveSessionExpired,
   shouldClearClientSessionForInvalidStatus,
 } from "./session-expiration";
+import {
+  clearCodexRelayServerUrlState,
+  codexRelayStorage as storage,
+  dedupeServerUrls,
+  fallbackCodexRelayServerUrl,
+  getCodexRelayServerUrl,
+  getCodexRelayServerUrlCandidates,
+  isCarrierGradePrivateIPv4Host,
+  isLocalIPv6Host,
+  isPrivateIPv4Host,
+  normalizeServerUrl,
+  saveCodexRelayServerUrlCandidates,
+  setCodexRelayServerUrl,
+  type CodexRelayServerUrlCandidate,
+} from "./codex-relay-server-url-storage";
 
-const defaultServerUrl = "http://localhost:8787";
 const skillsPath = "/v1/skills";
 const skillsRequestTimeoutMs = 8000;
 const clientSessionIdStorageKey = "codex-relay.client-session-id";
@@ -109,9 +126,6 @@ const clientTokenRefreshLeewayMs = 24 * 60 * 60 * 1000;
 const pairingConnectTimeoutMs = 2500;
 const streamRequestTimeoutMs = 10 * 60 * 1000;
 const terminalStreamRequestTimeoutMs = 24 * 60 * 60 * 1000;
-const serverUrlCandidatesStorageKey = "codex-relay.server-url-candidates";
-const serverUrlStorageKey = "codex-relay.server-url";
-const storage = createMMKV({ id: "codex-relay" });
 
 type NetworkRequestInit = RequestInit & {
   timeoutMs?: number;
@@ -123,10 +137,14 @@ type PairingQrPayload = {
   serverUrls: string[];
 };
 
-export type CodexRelayServerUrlCandidate = {
-  label: string;
-  url: string;
+export {
+  fallbackCodexRelayServerUrl,
+  getCodexRelayServerUrl,
+  getCodexRelayServerUrlCandidates,
+  normalizeServerUrl,
+  setCodexRelayServerUrl,
 };
+export type { CodexRelayServerUrlCandidate };
 
 class CodexRelayApiError extends Error {
   code: string | undefined;
@@ -161,26 +179,6 @@ export function isPairingQrPayloadError(error: unknown) {
   return error instanceof PairingQrPayloadError;
 }
 
-export const fallbackCodexRelayServerUrl =
-  process.env.EXPO_PUBLIC_CODEX_RELAY_SERVER_URL?.replace(/\/$/, "") ?? defaultServerUrl;
-
-export function getCodexRelayServerUrl() {
-  return storage.getString(serverUrlStorageKey) ?? fallbackCodexRelayServerUrl;
-}
-
-export function getCodexRelayServerUrlCandidates(): CodexRelayServerUrlCandidate[] {
-  return serverUrlCandidatesFromUrls([
-    getCodexRelayServerUrl(),
-    ...readStoredServerUrlCandidates(),
-  ]);
-}
-
-export function setCodexRelayServerUrl(url: string) {
-  const normalizedUrl = normalizeServerUrl(url);
-  storage.set(serverUrlStorageKey, normalizedUrl);
-  return normalizedUrl;
-}
-
 export function resolveCodexRelayUrl(url: string) {
   if (/^[a-z][a-z0-9+.-]*:/i.test(url)) {
     return url;
@@ -206,6 +204,7 @@ export function codexRelayImageRequestHeaders() {
 
 export function signOutCodexRelaySession() {
   clearClientSession("signed-out");
+  clearCodexRelayServerUrlState();
 }
 
 export function hasCodexRelaySession() {
@@ -242,7 +241,7 @@ export async function pairWithQrPayload(
   for (const serverUrl of pairingPayload.serverUrls) {
     try {
       const paired = await pairWithApproval(serverUrl, pairingPayload.serverPublicKey, handlers);
-      saveServerUrlCandidates([paired.serverUrl, ...pairingPayload.serverUrls]);
+      saveCodexRelayServerUrlCandidates([paired.serverUrl, ...pairingPayload.serverUrls]);
       return {
         ...pairingPayload,
         serverUrl: paired.serverUrl,
@@ -414,31 +413,6 @@ function isLocalhostUrl(url: string) {
   }
 }
 
-function isPrivateIPv4Host(host: string) {
-  const octets = host.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) {
-    return false;
-  }
-  return (
-    octets[0] === 10 ||
-    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-    (octets[0] === 192 && octets[1] === 168) ||
-    (octets[0] === 169 && octets[1] === 254)
-  );
-}
-
-function isCarrierGradePrivateIPv4Host(host: string) {
-  const octets = host.split(".").map(Number);
-  return octets.length === 4 && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
-}
-
-function isLocalIPv6Host(host: string) {
-  const normalized = host.replace(/^\[/, "").replace(/\]$/, "");
-  return (
-    normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")
-  );
-}
-
 export async function refreshSession() {
   if (!storage.getString(clientTokenStorageKey)) {
     return false;
@@ -489,20 +463,6 @@ function shouldRefreshClientToken() {
 
 function isSessionInvalidStatus(status: number) {
   return status === 401 || status === 403 || status === 410;
-}
-
-export function normalizeServerUrl(url: string) {
-  const trimmed = url.trim().replace(/\/$/, "");
-  if (!trimmed) {
-    throw new Error("Server URL is empty.");
-  }
-
-  const parsed = new URL(trimmed);
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Server URL must start with http:// or https://.");
-  }
-
-  return parsed.toString().replace(/\/$/, "");
 }
 
 function parsePairingQrPayload(payload: unknown): PairingQrPayload {
@@ -574,83 +534,19 @@ function parsePairingServerUrlsParam(value: string | null) {
   }
 
   try {
-    const parsed = JSON.parse(value) as unknown;
+    const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed)
       ? parsed.filter((url): url is string => typeof url === "string")
       : [];
   } catch {
     return [];
-  }
-}
-
-function dedupeServerUrls(urls: string[]) {
-  const deduped = new Set<string>();
-  for (const url of urls) {
-    try {
-      deduped.add(normalizeServerUrl(url));
-    } catch {
-      continue;
-    }
-  }
-  return [...deduped];
-}
-
-function readStoredServerUrlCandidates() {
-  const stored = storage.getString(serverUrlCandidatesStorageKey);
-  if (!stored) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(stored) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((url): url is string => typeof url === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveServerUrlCandidates(urls: string[]) {
-  storage.set(serverUrlCandidatesStorageKey, JSON.stringify(dedupeServerUrls(urls)));
-}
-
-function serverUrlCandidatesFromUrls(urls: string[]): CodexRelayServerUrlCandidate[] {
-  return dedupeServerUrls(urls).map((url) => ({
-    label: serverUrlCandidateLabel(url),
-    url,
-  }));
-}
-
-function serverUrlCandidateLabel(url: string) {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
-      return "Localhost";
-    }
-    if (host.endsWith(".local")) {
-      return "Local network";
-    }
-    if (host.endsWith(".ts.net") || host.endsWith(".beta.tailscale.net")) {
-      return "Tailscale DNS";
-    }
-    if (isCarrierGradePrivateIPv4Host(host)) {
-      return "Tailscale IP";
-    }
-    if (isPrivateIPv4Host(host) || isLocalIPv6Host(host)) {
-      return "LAN IP";
-    }
-    return "Server";
-  } catch {
-    return "Server";
   }
 }
 
 function pairingCandidateFailureMessage(errors: PairingCandidateConnectionError[]) {
   const attemptedUrls = errors.map((error) => error.serverUrl).join(", ");
   return attemptedUrls
-    ? `Could not reach any server URL from the pairing QR. Tried: ${attemptedUrls}. Make sure this device is on the same network, Tailscale is connected, or set CODEX_RELAY_PUBLIC_URL to a reachable URL.`
+    ? `Could not reach any server URL from the pairing QR. Tried: ${attemptedUrls}. Make sure this device is on the same network or Tailscale is connected.`
     : "Could not reach the server URL from the pairing QR.";
 }
 
@@ -795,6 +691,19 @@ export async function commitPushWorkspace(
       body: encryptRequestPayload(CommitPushWorkspaceRequestSchema.parse(body)),
     },
     WorkspaceGitActionResponseSchema.parse,
+  );
+}
+
+export async function startWorkspaceTailscaleServe(
+  body: WorkspaceTailscaleServeRequest,
+): Promise<WorkspaceTailscaleServeResponse> {
+  return request(
+    apiPaths.workspaceTailscaleServe,
+    {
+      method: "POST",
+      body: encryptRequestPayload(WorkspaceTailscaleServeRequestSchema.parse(body)),
+    },
+    WorkspaceTailscaleServeResponseSchema.parse,
   );
 }
 
@@ -1388,7 +1297,7 @@ function requestHeaders(
 }
 
 function saveSession(serverUrl: string, clientToken: string, clientTokenExpiresAt: string) {
-  storage.set(serverUrlStorageKey, serverUrl);
+  setCodexRelayServerUrl(serverUrl);
   storage.set(clientTokenStorageKey, clientToken);
   storage.set(clientTokenExpiresAtStorageKey, clientTokenExpiresAt);
 }

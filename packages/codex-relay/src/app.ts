@@ -45,6 +45,8 @@ import {
   WorkspaceTerminalResizeRequestSchema,
   WorkspaceTerminalSessionResponseSchema,
   WorkspaceTerminalStartRequestSchema,
+  WorkspaceTailscaleServeRequestSchema,
+  WorkspaceTailscaleServeResponseSchema,
   apiPaths,
   chatMessageDetailsFromPromptContext,
   createOpenApiDocument,
@@ -83,6 +85,7 @@ import {
   type WebPreviewTarget,
   type WorkspaceFileContentResponse,
   type WorkspaceGitActionResponse,
+  type WorkspaceTailscaleServeResponse,
   type WorkspaceTerminalOutputResponse,
   type WorkspaceTerminalSessionResponse,
 } from "./api-schema.js";
@@ -146,6 +149,11 @@ import {
   type ServerIdentity,
 } from "./secure-transport.js";
 import { listAvailableSkills } from "./skill-discovery.js";
+import {
+  startTailscaleServeForPreviewUrl,
+  TailscaleServeInvalidUrlError,
+} from "./tailscale-serve.js";
+import { resolveWorkspaceTerminalShell } from "./workspace-terminal-shell.js";
 
 const defaultWorkspacePath = process.cwd();
 const defaultCodexModel = "gpt-5.5";
@@ -169,6 +177,9 @@ type AppOptions = {
   codex?: CodexClient;
   pairing?: PairingOptions;
   preferences?: RuntimePreferencesStore;
+  tailscaleServeForPreviewUrl?: (input: {
+    readonly url: string;
+  }) => Promise<WorkspaceTailscaleServeResponse>;
   workspacePath?: string;
 };
 
@@ -916,6 +927,46 @@ export function createApp(options: AppOptions = {}) {
         secureSessionsByTokenHash,
         apiError("workspace_terminal_start_failed", errorMessage(error)),
         400,
+      );
+    }
+  });
+
+  app.post(apiPaths.workspaceTailscaleServe, async (c) => {
+    const parsed = await parseRequestJson(
+      c,
+      options.pairing,
+      secureSessionsByTokenHash,
+      WorkspaceTailscaleServeRequestSchema,
+    );
+    if (!parsed.success) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        validationError(parsed.error),
+        400,
+      );
+    }
+
+    try {
+      const servePreviewUrl =
+        options.tailscaleServeForPreviewUrl ?? startTailscaleServeForPreviewUrl;
+      const serve = await servePreviewUrl({ url: parsed.data.url });
+      const response: WorkspaceTailscaleServeResponse =
+        WorkspaceTailscaleServeResponseSchema.parse(serve);
+      return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
+    } catch (error) {
+      const status = error instanceof TailscaleServeInvalidUrlError ? 400 : 502;
+      const code =
+        error instanceof TailscaleServeInvalidUrlError
+          ? "invalid_tailscale_preview_url"
+          : "tailscale_serve_failed";
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError(code, errorMessage(error)),
+        status,
       );
     }
   });
@@ -7722,8 +7773,8 @@ function createWorkspaceTerminalSession(input: {
 }): WorkspaceTerminalSession {
   const sessionId = randomUUID();
   const startedAt = new Date().toISOString();
-  const shell = process.env.SHELL || "/bin/sh";
-  const child = pty.spawn(shell, ["-l"], {
+  const shell = resolveWorkspaceTerminalShell();
+  const child = pty.spawn(shell.command, [...shell.args], {
     cols: input.cols,
     cwd: input.cwd,
     env: {

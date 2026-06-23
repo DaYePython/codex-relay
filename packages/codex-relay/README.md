@@ -95,7 +95,6 @@ The relay listens on `0.0.0.0:8787` by default. Configure it with environment va
 | -------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `PORT`                                 | Server port. Defaults to `8787`.                                                                   |
 | `HOST`                                 | Listen host. Defaults to `0.0.0.0`.                                                                |
-| `CODEX_RELAY_PUBLIC_URL`               | URL printed into the pairing QR, for example a Tailscale or tunnel URL.                            |
 | `CODEX_RELAY_WORKSPACE_PATH`           | Workspace path Codex should use. Defaults to the directory where you run `npx codex-relay@latest`. |
 | `CODEX_RELAY_AUTH_DB_PATH`             | Pairing and session database path. Defaults to `.codex-relay/auth.db`.                             |
 | `CODEX_RELAY_APPROVAL_SECRET`          | Secret used by the local approve command. Usually generated automatically.                         |
@@ -110,10 +109,6 @@ PORT=8788 npx codex-relay@latest
 ```
 
 ```sh
-CODEX_RELAY_PUBLIC_URL=http://100.64.0.10:8787 npx codex-relay@latest
-```
-
-```sh
 CODEX_RELAY_WORKSPACE_PATH=/path/to/project npx codex-relay@latest
 ```
 
@@ -124,7 +119,6 @@ The phone must be able to reach one of the URLs printed by the relay.
 - On the same Wi-Fi network, the relay usually prints a local network address.
 - On Tailscale, the relay prefers your Tailscale address when it can detect one.
 - If several Wi-Fi, VPN, or virtual network addresses are available, the QR includes all detected candidates and the app tries them automatically.
-- If the printed URL is not reachable from the phone, set `CODEX_RELAY_PUBLIC_URL` to a reachable HTTP URL.
 
 ## Troubleshooting
 
@@ -154,4 +148,3 @@ Connection checklist:
 - If keeping the same network is difficult, are both devices connected through Tailscale or another reachable private network?
 - Can the phone open the exact `Mobile:` URL printed by the relay?
 - Does the computer firewall allow inbound traffic on the relay port, usually `8787`?
-- If the printed URL is not reachable, did you set `CODEX_RELAY_PUBLIC_URL` to a reachable LAN, Tailscale, or tunnel URL?

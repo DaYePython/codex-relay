@@ -336,7 +336,11 @@ export function WorkspacePreviewSurface({
             />
           ))}
           {availableTabs(previewTabs).length === 0 ? (
-            <View style={styles.addTabEmpty}>
+            <View
+              accessible
+              accessibilityLabel="All available tabs are already open."
+              style={styles.addTabEmpty}
+            >
               <ThemedText type="small" themeColor="textSecondary">
                 All available tabs are already open.
               </ThemedText>

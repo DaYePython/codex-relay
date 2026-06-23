@@ -1,7 +1,7 @@
 import type { WebPreviewTarget } from "codex-relay/api-schema";
 import { useSelector } from "@legendapp/state/react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { TextInput, View } from "react-native";
+import { ActivityIndicator, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewNavigation } from "react-native-webview";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Text as UiText } from "@/components/ui/text";
 import { Colors, Fonts, Spacing } from "@/constants/theme";
-import { getCodexRelayServerUrl } from "@/lib/codex-relay-api";
+import { getCodexRelayServerUrl, startWorkspaceTailscaleServe } from "@/lib/codex-relay-api";
 import { hapticSelection } from "@/lib/haptics";
 import {
   updateWorkspacePreviewWebState,
@@ -46,6 +46,9 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
   const [webUrl, setWebUrl] = useState(initialWebUrl);
   const [webError, setWebError] = useState<string | null>(null);
   const [webReloadKey, setWebReloadKey] = useState(0);
+  const [tailscaleServeStatus, setTailscaleServeStatus] = useState<TailscaleServeStatus>({
+    kind: "idle",
+  });
   const [webNavigationState, setWebNavigationState] = useState<
     Pick<WebViewNavigation, "canGoBack" | "canGoForward" | "loading">
   >({
@@ -53,6 +56,11 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
     canGoForward: false,
     loading: false,
   });
+  const tailscaleServeCandidate = useMemo(
+    () => tailscaleServeCandidateFromUrl(webUrlDraft, defaultWebPreviewUrl),
+    [defaultWebPreviewUrl, webUrlDraft],
+  );
+  const shouldShowTailscaleServeAction = Boolean(tailscaleServeCandidate && webError);
 
   useEffect(() => {
     if (savedWebState?.isUserControlled) {
@@ -70,6 +78,7 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
 
   function commitWebUrl() {
     const normalized = normalizePreviewUrl(webUrlDraft, defaultWebPreviewUrl);
+    setTailscaleServeStatus({ kind: "idle" });
     setWebUrlDraft(normalized);
     setWebUrl(normalized);
     sourceUrlRef.current = normalized;
@@ -115,6 +124,33 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
     webViewRef.current?.reload();
   }
 
+  async function handleStartTailscaleServe() {
+    if (!tailscaleServeCandidate || tailscaleServeStatus.kind === "loading") {
+      return;
+    }
+
+    hapticSelection();
+    setTailscaleServeStatus({ kind: "loading" });
+    try {
+      const serve = await startWorkspaceTailscaleServe({ url: tailscaleServeCandidate.url });
+      setTailscaleServeStatus({ kind: "idle" });
+      setWebError(null);
+      setWebUrlDraft(serve.url);
+      setWebUrl(serve.url);
+      sourceUrlRef.current = serve.url;
+      updateWorkspacePreviewWebState(workspacePath, {
+        draft: serve.url,
+        isUserControlled: true,
+        url: serve.url,
+      });
+    } catch (error) {
+      setTailscaleServeStatus({
+        kind: "error",
+        message: errorMessage(error, "Could not start Tailscale Serve."),
+      });
+    }
+  }
+
   return (
     <View
       style={[
@@ -129,6 +165,7 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
           autoCorrect={false}
           keyboardType="url"
           onChangeText={(value) => {
+            setTailscaleServeStatus({ kind: "idle" });
             setWebUrlDraft(value);
             updateWorkspacePreviewWebState(workspacePath, {
               draft: value,
@@ -192,27 +229,71 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
             >
               {webError}
             </ThemedText>
-            <Button
-              accessibilityRole="button"
-              accessibilityLabel="Retry web preview"
-              onPress={() => {
-                hapticSelection();
-                setWebReloadKey((current) => current + 1);
-              }}
-              size="lg"
-              variant="secondary"
-              className="rounded-md border border-border bg-secondary/80"
-              style={({ pressed }) => [styles.webErrorRetry, pressed && styles.pressed]}
-            >
-              <Icon name="refresh" size={14} tintColor={Colors.dark.text} />
-              <UiText
-                className="text-foreground"
-                numberOfLines={1}
-                style={styles.webErrorRetryText}
+            {shouldShowTailscaleServeAction && tailscaleServeCandidate ? (
+              <Button
+                accessibilityRole="button"
+                accessibilityLabel={`Run Tailscale Serve for port ${tailscaleServeCandidate.port}`}
+                disabled={tailscaleServeStatus.kind === "loading"}
+                onPress={handleStartTailscaleServe}
+                size="lg"
+                variant="secondary"
+                className="rounded-md border border-border bg-secondary/80"
+                style={({ pressed }) => [
+                  styles.tailscaleRetryAction,
+                  pressed && tailscaleServeStatus.kind !== "loading" && styles.pressed,
+                ]}
               >
-                Retry
-              </UiText>
-            </Button>
+                <View style={styles.tailscaleRetryCommand}>
+                  <ThemedText type="code" numberOfLines={1} style={styles.tailscaleCommandPrompt}>
+                    &gt;
+                  </ThemedText>
+                  <ThemedText type="code" numberOfLines={1} style={styles.tailscaleCommandText}>
+                    tailscale serve {tailscaleServeCandidate.port}
+                  </ThemedText>
+                </View>
+                <View style={styles.tailscaleRetryRun}>
+                  {tailscaleServeStatus.kind === "loading" ? (
+                    <ActivityIndicator color={Colors.dark.text} size="small" />
+                  ) : (
+                    <Icon name="terminal" size={14} tintColor={Colors.dark.text} />
+                  )}
+                  <UiText className="text-foreground" style={styles.tailscaleServeButtonText}>
+                    Run
+                  </UiText>
+                </View>
+              </Button>
+            ) : (
+              <Button
+                accessibilityRole="button"
+                accessibilityLabel="Retry web preview"
+                onPress={() => {
+                  hapticSelection();
+                  setWebReloadKey((current) => current + 1);
+                }}
+                size="lg"
+                variant="secondary"
+                className="rounded-md border border-border bg-secondary/80"
+                style={({ pressed }) => [styles.webErrorRetry, pressed && styles.pressed]}
+              >
+                <Icon name="refresh" size={14} tintColor={Colors.dark.text} />
+                <UiText
+                  className="text-foreground"
+                  numberOfLines={1}
+                  style={styles.webErrorRetryText}
+                >
+                  Retry
+                </UiText>
+              </Button>
+            )}
+            {tailscaleServeStatus.kind === "error" ? (
+              <ThemedText
+                type="small"
+                themeColor="textSecondary"
+                style={styles.tailscaleServeError}
+              >
+                {tailscaleServeStatus.message}
+              </ThemedText>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -244,6 +325,16 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
     </View>
   );
 });
+
+type TailscaleServeStatus =
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "error"; readonly message: string };
+
+type TailscaleServeCandidate = {
+  readonly port: number;
+  readonly url: string;
+};
 
 function WebControlButton({
   accessibilityLabel,
@@ -303,6 +394,57 @@ function webPreviewHostLabel(value: string) {
   }
 }
 
+function tailscaleServeCandidateFromUrl(
+  value: string,
+  fallbackUrl: string,
+): TailscaleServeCandidate | null {
+  try {
+    const parsedUrl = new URL(normalizePreviewUrl(value, fallbackUrl));
+    if (parsedUrl.protocol !== "http:" || !parsedUrl.port) {
+      return null;
+    }
+
+    const port = Number(parsedUrl.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return null;
+    }
+    if (!isTailscaleHost(parsedUrl.hostname)) {
+      return null;
+    }
+
+    return {
+      port,
+      url: parsedUrl.href,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isTailscaleHost(hostname: string) {
+  const lowerHostname = hostname.toLowerCase();
+  return lowerHostname.endsWith(".ts.net") || isTailscaleIpv4Host(lowerHostname);
+}
+
+function isTailscaleIpv4Host(hostname: string) {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  const octets = parts.map((part) => Number(part));
+  if (!octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+    return false;
+  }
+
+  const [first, second] = octets;
+  return first === 100 && second !== undefined && second >= 64 && second <= 127;
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 const styles = StyleSheet.create({
   contentPane: {
     flex: 1,
@@ -340,6 +482,63 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sansBold,
     fontSize: 14,
     lineHeight: 18,
+  },
+  tailscaleRetryAction: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.07)",
+    borderColor: "rgba(132, 145, 165, 0.22)",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    height: 44,
+    justifyContent: "space-between",
+    maxWidth: 360,
+    overflow: "hidden",
+    paddingHorizontal: 0,
+    width: "100%",
+  },
+  tailscaleRetryCommand: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: Spacing.one,
+    minWidth: 0,
+    paddingLeft: Spacing.three,
+    paddingRight: Spacing.two,
+  },
+  tailscaleCommandPrompt: {
+    color: Colors.dark.textSecondary,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  tailscaleCommandText: {
+    color: Colors.dark.text,
+    flex: 1,
+    fontFamily: Fonts.mono,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  tailscaleRetryRun: {
+    alignItems: "center",
+    borderColor: "rgba(132, 145, 165, 0.22)",
+    borderLeftWidth: 1,
+    flexDirection: "row",
+    gap: Spacing.one,
+    height: "100%",
+    justifyContent: "center",
+    minWidth: 82,
+    paddingHorizontal: Spacing.two,
+  },
+  tailscaleServeButtonText: {
+    color: Colors.dark.text,
+    flexShrink: 1,
+    fontFamily: Fonts.sansBold,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  tailscaleServeError: {
+    paddingHorizontal: Spacing.two,
   },
   webViewFrame: {
     backgroundColor: Colors.dark.backgroundElement,

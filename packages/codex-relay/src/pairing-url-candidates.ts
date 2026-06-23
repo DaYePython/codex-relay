@@ -13,7 +13,7 @@ export function getConnectUrlGuidance(url: string) {
   }
 
   if (isLocalhost(host) || isUnspecifiedHost(host)) {
-    return "This address is only reachable from this computer. Use a same-Wi-Fi address, Tailscale, or CODEX_RELAY_PUBLIC_URL for mobile pairing.";
+    return "This address is only reachable from this computer. Use a same-Wi-Fi address or Tailscale for mobile pairing.";
   }
 
   if (isTailscaleHost(host)) {
@@ -45,7 +45,6 @@ export function createPairingQrPayload(details: { serverPublicKey: string; serve
 
 export function getConnectUrlCandidates(details: { listenUrl: string; port: number }) {
   return dedupeCandidates([
-    ...configuredConnectUrlCandidates(),
     ...tailscaleConnectUrlCandidates(details.port),
     ...localNetworkConnectUrlCandidates(details.port),
     { label: "Server", url: details.listenUrl },
@@ -70,11 +69,6 @@ export function normalizeUrl(value: string | undefined) {
   } catch {
     return undefined;
   }
-}
-
-function configuredConnectUrlCandidates() {
-  const configuredUrl = normalizeUrl(process.env.CODEX_RELAY_PUBLIC_URL);
-  return configuredUrl ? [{ label: "Configured", url: configuredUrl }] : [];
 }
 
 function tailscaleConnectUrlCandidates(port: number) {

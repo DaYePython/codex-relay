@@ -464,6 +464,15 @@ export const WorkspaceTerminalResizeRequestSchema = z.object({
   rows: z.number().int().min(2).max(120),
 });
 
+export const WorkspaceTailscaleServeRequestSchema = z.object({
+  url: z.string().url(),
+});
+
+export const WorkspaceTailscaleServeResponseSchema = z.object({
+  port: z.number().int().positive(),
+  url: z.string().url(),
+});
+
 export const PairRequestSchema = z.object({
   clientSessionId: z.string().trim().min(1).max(120).optional(),
   clientName: z.string().trim().min(1).max(80).optional(),
@@ -762,6 +771,8 @@ export type WorkspaceTerminalSessionResponse = z.infer<
 export type WorkspaceTerminalOutputResponse = z.infer<typeof WorkspaceTerminalOutputResponseSchema>;
 export type WorkspaceTerminalInputRequest = z.infer<typeof WorkspaceTerminalInputRequestSchema>;
 export type WorkspaceTerminalResizeRequest = z.infer<typeof WorkspaceTerminalResizeRequestSchema>;
+export type WorkspaceTailscaleServeRequest = z.infer<typeof WorkspaceTailscaleServeRequestSchema>;
+export type WorkspaceTailscaleServeResponse = z.infer<typeof WorkspaceTailscaleServeResponseSchema>;
 export type WebPreviewTarget = z.infer<typeof WebPreviewTargetSchema>;
 export type PairRequest = z.infer<typeof PairRequestSchema>;
 export type PairResponse = z.infer<typeof PairResponseSchema>;
@@ -1024,6 +1035,7 @@ export const apiPaths = {
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/output/stream`,
   workspaceTerminalResize: (sessionId: string) =>
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/resize`,
+  workspaceTailscaleServe: "/v1/workspace/tailscale/serve",
   imageAttachments: "/v1/attachments/images",
   imageAttachment: (attachmentId: string) =>
     `/v1/attachments/images/${encodeURIComponent(attachmentId)}`,
@@ -1166,6 +1178,17 @@ export function createOpenApiDocument() {
             "200": jsonResponse("WorkspaceFileContentResponse"),
             "400": jsonResponse("ErrorResponse"),
             "404": jsonResponse("ErrorResponse"),
+            "502": jsonResponse("ErrorResponse"),
+          },
+        },
+      },
+      "/v1/workspace/tailscale/serve": {
+        post: {
+          summary: "Start Tailscale Serve for a workspace preview URL",
+          requestBody: jsonRequest("WorkspaceTailscaleServeRequest"),
+          responses: {
+            "200": jsonResponse("WorkspaceTailscaleServeResponse"),
+            "400": jsonResponse("ErrorResponse"),
             "502": jsonResponse("ErrorResponse"),
           },
         },
@@ -1526,6 +1549,21 @@ export function createOpenApiDocument() {
             content: { type: "string", maxLength: 1048576 },
             path: { type: "string" },
             workspacePath: { type: "string" },
+          },
+        },
+        WorkspaceTailscaleServeRequest: {
+          type: "object",
+          required: ["url"],
+          properties: {
+            url: { type: "string", format: "uri" },
+          },
+        },
+        WorkspaceTailscaleServeResponse: {
+          type: "object",
+          required: ["url", "port"],
+          properties: {
+            url: { type: "string", format: "uri" },
+            port: { type: "integer", minimum: 1 },
           },
         },
         CreateThreadRequest: {

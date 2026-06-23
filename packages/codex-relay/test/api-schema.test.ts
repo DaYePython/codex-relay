@@ -4,9 +4,11 @@ import { join } from "node:path";
 
 import {
   WORKSPACE_PREVIEW_OPEN_PROTOCOL,
+  apiPaths,
   promptMarkdownWithSkills,
   WorkspacePreviewNavigationRequestSchema,
 } from "../src/api-schema.js";
+import * as apiSchema from "../src/api-schema.js";
 
 const githubSkill = {
   name: "github",
@@ -93,6 +95,34 @@ describe("WorkspacePreviewNavigationRequestSchema", () => {
       protocol: WORKSPACE_PREVIEW_OPEN_PROTOCOL,
       tab: "ssh",
       workspacePath: "/workspace/project",
+    });
+  });
+});
+
+describe("WorkspaceTailscaleServe schemas", () => {
+  it("exposes the workspace Tailscale Serve endpoint path", () => {
+    expect(apiPaths.workspaceTailscaleServe).toBe("/v1/workspace/tailscale/serve");
+  });
+
+  it("accepts a request containing the workspace preview URL", () => {
+    expect(
+      apiSchema.WorkspaceTailscaleServeRequestSchema.parse({
+        url: "http://100.103.76.81:3000/",
+      }),
+    ).toEqual({
+      url: "http://100.103.76.81:3000/",
+    });
+  });
+
+  it("accepts a response containing the Serve URL and preview port", () => {
+    expect(
+      apiSchema.WorkspaceTailscaleServeResponseSchema.parse({
+        port: 3000,
+        url: "https://device.tailnet.ts.net",
+      }),
+    ).toEqual({
+      port: 3000,
+      url: "https://device.tailnet.ts.net",
     });
   });
 });

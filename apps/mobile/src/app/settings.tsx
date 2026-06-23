@@ -49,6 +49,7 @@ const hotUpdaterBaseUrlStatus = hotUpdaterBaseUrl ? "configured" : "missing";
 export default function SettingsScreen() {
   const queryClient = useQueryClient();
   const connection = useSelector(() => chatStore$.connection.get());
+  const hasPairedSession = useSelector(() => chatStore$.hasPairedSession.get());
   const serverUrl = useSelector(() => chatStore$.serverUrl.get());
   const statusQuery = useQuery({
     queryKey: serverStateKeys.status(),
@@ -61,7 +62,9 @@ export default function SettingsScreen() {
     enabled: connection === "connected",
   });
   const machineName = statusQuery.data?.machineName;
-  const computerName = machineName ?? connectedComputerName(serverUrl);
+  const computerName = hasPairedSession
+    ? (machineName ?? connectedComputerName(serverUrl))
+    : "No paired computer";
   const [appVersion] = useState(() => HotUpdater.getAppVersion() ?? "1.0.0");
   const [appliedBundleSuffix] = useState(appliedHotUpdateBundleSuffix);
   const hotUpdaterTapCountRef = useRef(0);
@@ -376,89 +379,99 @@ export default function SettingsScreen() {
                   </ThemedText>
                 </View>
               </Animated.View>
-              <InfoLine label="Server" value={compactServer(serverUrl)} />
-              <View style={styles.serverAddressList}>
-                {serverUrlCandidates.map((candidate) => {
-                  const isSelected = candidate.url === serverUrl;
-                  const isSwitching = switchingServerUrl === candidate.url;
-                  return (
-                    <Pressable
-                      key={candidate.url}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Use ${compactServer(candidate.url)}`}
-                      disabled={isSelected || Boolean(switchingServerUrl)}
-                      onPress={() => void selectServerAddress(candidate)}
-                      style={({ pressed }) => [
-                        styles.serverAddressRow,
-                        isSelected && styles.serverAddressRowSelected,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <View style={styles.serverAddressCopy}>
-                        <ThemedText type="smallBold" style={styles.serverAddressLabel}>
-                          {candidate.label}
-                        </ThemedText>
-                        <ThemedText
-                          type="code"
-                          themeColor="textSecondary"
-                          style={styles.serverAddressValue}
-                          numberOfLines={1}
-                        >
-                          {compactServer(candidate.url)}
-                        </ThemedText>
-                      </View>
-                      <View
-                        style={[
-                          styles.serverAddressStatus,
-                          isSelected && styles.serverAddressStatusSelected,
-                        ]}
-                      >
-                        <ThemedText
-                          type="code"
-                          style={[
-                            styles.serverAddressStatusText,
-                            isSelected && styles.serverAddressStatusTextSelected,
+              {hasPairedSession ? (
+                <>
+                  <InfoLine label="Server" value={compactServer(serverUrl)} />
+                  <View style={styles.serverAddressList}>
+                    {serverUrlCandidates.map((candidate) => {
+                      const isSelected = candidate.url === serverUrl;
+                      const isSwitching = switchingServerUrl === candidate.url;
+                      return (
+                        <Pressable
+                          key={candidate.url}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Use ${compactServer(candidate.url)}`}
+                          disabled={isSelected || Boolean(switchingServerUrl)}
+                          onPress={() => void selectServerAddress(candidate)}
+                          style={({ pressed }) => [
+                            styles.serverAddressRow,
+                            isSelected && styles.serverAddressRowSelected,
+                            pressed && styles.pressed,
                           ]}
                         >
-                          {isSwitching ? "CHECKING" : isSelected ? "ACTIVE" : "USE"}
-                        </ThemedText>
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
+                          <View style={styles.serverAddressCopy}>
+                            <ThemedText type="smallBold" style={styles.serverAddressLabel}>
+                              {candidate.label}
+                            </ThemedText>
+                            <ThemedText
+                              type="code"
+                              themeColor="textSecondary"
+                              style={styles.serverAddressValue}
+                              numberOfLines={1}
+                            >
+                              {compactServer(candidate.url)}
+                            </ThemedText>
+                          </View>
+                          <View
+                            style={[
+                              styles.serverAddressStatus,
+                              isSelected && styles.serverAddressStatusSelected,
+                            ]}
+                          >
+                            <ThemedText
+                              type="code"
+                              style={[
+                                styles.serverAddressStatusText,
+                                isSelected && styles.serverAddressStatusTextSelected,
+                              ]}
+                            >
+                              {isSwitching ? "CHECKING" : isSelected ? "ACTIVE" : "USE"}
+                            </ThemedText>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : (
+                <ThemedText type="small" themeColor="textSecondary" style={styles.unpairedCopy}>
+                  Pair this device from the main screen to choose a relay server.
+                </ThemedText>
+              )}
             </Animated.View>
           </Animated.View>
 
-          <Animated.View layout={settingsLayoutTransition} style={styles.section}>
-            <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-              Session
-            </ThemedText>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Sign out"
-              onPress={signOut}
-              style={({ pressed }) => [styles.signOutRow, pressed && styles.pressed]}
-            >
-              <View style={styles.signOutContent}>
-                <View style={styles.signOutIconSlot}>
-                  <Icon name="signOut" size={17} tintColor="#FFB4A8" />
+          {hasPairedSession ? (
+            <Animated.View layout={settingsLayoutTransition} style={styles.section}>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
+                Session
+              </ThemedText>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Sign out"
+                onPress={signOut}
+                style={({ pressed }) => [styles.signOutRow, pressed && styles.pressed]}
+              >
+                <View style={styles.signOutContent}>
+                  <View style={styles.signOutIconSlot}>
+                    <Icon name="signOut" size={17} tintColor="#FFB4A8" />
+                  </View>
+                  <View style={styles.signOutCopy}>
+                    <ThemedText type="smallBold" style={styles.signOutTitle}>
+                      Sign out
+                    </ThemedText>
+                    <ThemedText
+                      type="small"
+                      themeColor="textSecondary"
+                      style={styles.signOutSubtitle}
+                    >
+                      Pair again on this device
+                    </ThemedText>
+                  </View>
                 </View>
-                <View style={styles.signOutCopy}>
-                  <ThemedText type="smallBold" style={styles.signOutTitle}>
-                    Sign out
-                  </ThemedText>
-                  <ThemedText
-                    type="small"
-                    themeColor="textSecondary"
-                    style={styles.signOutSubtitle}
-                  >
-                    Pair again on this device
-                  </ThemedText>
-                </View>
-              </View>
-            </Pressable>
-          </Animated.View>
+              </Pressable>
+            </Animated.View>
+          ) : null}
 
           <Animated.View layout={settingsLayoutTransition} style={styles.versionFooter}>
             <Animated.View layout={settingsLayoutTransition} style={styles.versionRow}>
@@ -1138,6 +1151,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 19,
     minWidth: 0,
+  },
+  unpairedCopy: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   connectionBadge: {
     backgroundColor: "rgba(255, 255, 255, 0.06)",

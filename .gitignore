@@ -1,6 +1,7 @@
+.omo/
 
 dogfood-output
-.omx
+.omx/
 dogfood-output-*
 .codex-relay/
 apps/server/.codex-relay/

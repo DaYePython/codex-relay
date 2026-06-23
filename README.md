@@ -96,14 +96,31 @@ Your phone must be able to open the `Mobile:` URL printed by Codex Relay.
 
 - Same Wi-Fi usually works.
 - Tailscale is a good default when the devices are on different networks.
-- If the printed URL is not reachable from your phone, set
-  `CODEX_RELAY_PUBLIC_URL` to a reachable LAN, Tailscale, or tunnel URL.
 
-Example:
+### Tailscale and Web Previews
+
+Pairing only makes the Codex Relay server reachable. If you open a local web
+app from the mobile Web preview, that app's port must also be reachable from
+the phone.
+
+When using Tailscale, prefer [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
+for preview ports so the iOS WebView loads the site over HTTPS. For example,
+if your local app runs on `http://127.0.0.1:3000`:
 
 ```sh
-CODEX_RELAY_PUBLIC_URL=http://<computer-ip>:8787 npx codex-relay@latest
+tailscale serve 3000
 ```
+
+Tailscale prints an `https://<machine>.<tailnet>.ts.net` URL. Open that HTTPS
+URL in the mobile Web preview instead of `http://100.x.y.z:3000`. If the Web
+preview says App Transport Security requires a secure connection, the app is
+trying to load a plain HTTP URL; expose that same port with `tailscale serve`
+or another HTTPS tunnel and retry.
+
+The mobile Web preview also detects `http://100.x.y.z:<port>` and
+`http://<machine>.<tailnet>.ts.net:<port>` URLs. When detected, tap **Serve**
+in the Tailscale row to run Tailscale Serve for that port from the relay machine
+and switch the preview to the returned HTTPS URL automatically.
 
 ## Contributing
 
@@ -134,7 +151,6 @@ The relay listens on `0.0.0.0:8787` by default.
 | ---------------------------- | ------------------------------------------------------------------- |
 | `PORT`                       | Server port. Defaults to `8787`.                                    |
 | `HOST`                       | Listen host. Defaults to `0.0.0.0`.                                 |
-| `CODEX_RELAY_PUBLIC_URL`     | URL printed into the pairing QR, such as a Tailscale or tunnel URL. |
 | `CODEX_RELAY_WORKSPACE_PATH` | Workspace path Codex should use. Defaults to the current directory. |
 | `CODEX_RELAY_AUTH_DB_PATH`   | Pairing and session database path.                                  |
 | `CODEX_BIN`                  | Codex CLI executable path.                                          |
@@ -168,8 +184,6 @@ Connection checklist:
 - Can the phone open the exact `Mobile:` URL printed by the relay?
 - Does the computer firewall allow inbound traffic on the relay port, usually
   `8787`?
-- If the printed URL is not reachable, did you set `CODEX_RELAY_PUBLIC_URL` to
-  a reachable LAN, Tailscale, or tunnel URL?
 
 ## License
 

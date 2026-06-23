@@ -667,6 +667,55 @@ describe("Codex Relay server routes", () => {
     expect(closeResponse.status).toBe(204);
   });
 
+  it("starts Tailscale Serve for a workspace web preview URL", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const servedUrls: string[] = [];
+    const app = createApp({
+      codex: createMockCodex(),
+      tailscaleServeForPreviewUrl: async ({ url }) => {
+        servedUrls.push(url);
+        return {
+          port: 3000,
+          url: "https://device.tailnet.ts.net",
+        };
+      },
+      workspacePath,
+    });
+
+    const response = await app.request("/v1/workspace/tailscale/serve", {
+      method: "POST",
+      body: JSON.stringify({ url: "http://100.103.76.81:3000/" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(servedUrls).toEqual(["http://100.103.76.81:3000/"]);
+    expect(body).toEqual({
+      port: 3000,
+      url: "https://device.tailnet.ts.net",
+    });
+  });
+
+  it("rejects non-Tailscale workspace web preview URLs before starting Serve", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const app = createApp({ codex: createMockCodex(), workspacePath });
+
+    const response = await app.request("/v1/workspace/tailscale/serve", {
+      method: "POST",
+      body: JSON.stringify({ url: "http://192.168.1.4:3000/" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({
+      error: {
+        code: "invalid_tailscale_preview_url",
+      },
+    });
+  });
+
   it("streams workspace terminal output without repeated output reads", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const app = createApp({ codex: createMockCodex(), workspacePath });

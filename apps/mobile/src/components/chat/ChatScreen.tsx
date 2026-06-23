@@ -140,6 +140,7 @@ import { addWorkspacePreviewTab } from "@/state/workspace-preview-store";
 
 import { ChatControls } from "./ChatControls";
 import { ChatShell } from "./ChatShell";
+import type { ChatShellAction } from "./ChatShellHeader";
 import { ConnectionBanner } from "./ConnectionBanner";
 import {
   EXPANDED_DRAWER_BREAKPOINT,
@@ -167,7 +168,11 @@ const EMPTY_THREADS: ThreadSummary[] = [];
 let isHandlingPairingLink = false;
 let lastHandledPairingUrl: string | undefined;
 
-export function ChatScreen() {
+type ChatScreenProps = {
+  initialPairingUrl?: string | null;
+};
+
+export function ChatScreen({ initialPairingUrl }: ChatScreenProps = {}) {
   const { width } = useWindowDimensions();
   const { isSidebarVisible, toggleSidebar } = useIpadSplitLayout();
   const [pasteApprovalCode, setPasteApprovalCode] = useState<string | undefined>(undefined);
@@ -1151,7 +1156,8 @@ export function ChatScreen() {
     if (!cameraPermission?.granted) {
       const permission = await requestCameraPermission();
       if (!permission.granted) {
-        Alert.alert("Camera access needed", "Allow camera access to scan the connection QR code.");
+        setScannerMessage("Camera access is off. Allow camera access to scan the connection QR.");
+        setScannerOpen(true);
         return;
       }
     }
@@ -1179,6 +1185,15 @@ export function ChatScreen() {
     setScannerOpen(true);
   }
 
+  async function retryCameraPermission() {
+    const permission = await requestCameraPermission();
+    setScannerMessage(
+      permission.granted
+        ? "Point the camera at the connection QR."
+        : "Camera access is off. Allow camera access to scan the connection QR.",
+    );
+  }
+
   const handlePairingLink = useCallback(
     async (url: string | null) => {
       const pairingUrl = url?.trim();
@@ -1190,7 +1205,6 @@ export function ChatScreen() {
         return;
       }
 
-      lastHandledPairingUrl = pairingUrl;
       isHandlingPairingLink = true;
       setPastePairing(true);
       setPasteApprovalCode(undefined);
@@ -1207,6 +1221,7 @@ export function ChatScreen() {
         clearServerState(queryClient);
         syncPairedSessionState();
         setPastePairOpen(false);
+        lastHandledPairingUrl = pairingUrl;
         setPasteApprovalCode(undefined);
         setPasteApprovalServerUrl(undefined);
         hapticSuccess();
@@ -1223,6 +1238,9 @@ export function ChatScreen() {
 
   useEffect(() => {
     let isMounted = true;
+    if (initialPairingUrl) {
+      void handlePairingLink(initialPairingUrl);
+    }
     void Linking.getInitialURL().then((url) => {
       if (isMounted) {
         void handlePairingLink(url);
@@ -1234,7 +1252,7 @@ export function ChatScreen() {
       isMounted = false;
       unsubscribe();
     };
-  }, [handlePairingLink]);
+  }, [handlePairingLink, initialPairingUrl]);
 
   const closeScannerSurface = useCallback(async () => {
     const wasModernScannerOpen = isModernScannerOpenRef.current;
@@ -2049,7 +2067,7 @@ export function ChatScreen() {
   }, [wideLayoutWidth]);
 
   const clampedPreviewPaneWidth = clampPreviewPaneWidth(previewPaneWidth, wideLayoutWidth);
-  const showsWidePreviewPane = usesWideLayout && isWidePreviewVisible;
+  const showsWidePreviewPane = hasPairedSession && usesWideLayout && isWidePreviewVisible;
   const wideChatPaneWidth =
     wideLayoutWidth > 0
       ? Math.max(
@@ -2088,7 +2106,35 @@ export function ChatScreen() {
   }, []);
 
   const isPairing = isPastePairing || isHandlingScan;
-  const isWorkspacePreviewVisible = usesWideLayout ? showsWidePreviewPane : activePagerPage === 1;
+  const isWorkspacePreviewVisible = usesWideLayout
+    ? showsWidePreviewPane
+    : hasPairedSession && activePagerPage === 1;
+  const chatTrailingActions: ChatShellAction[] = hasPairedSession
+    ? [
+        {
+          disabled: isRunning,
+          icon: "newThread",
+          label: "New thread",
+          onPress: createNewThread,
+        },
+        {
+          icon: usesWideLayout ? (isWidePreviewVisible ? "previewHide" : "preview") : "preview",
+          label: usesWideLayout
+            ? isWidePreviewVisible
+              ? "Hide workspace preview"
+              : "Show workspace preview"
+            : "Workspace preview",
+          onPress: usesWideLayout
+            ? toggleWorkspacePreview
+            : () =>
+                openWorkspacePreview({
+                  protocol: WORKSPACE_PREVIEW_OPEN_PROTOCOL,
+                  tab: "git",
+                  workspacePath: activeWorkspacePath,
+                }),
+        },
+      ]
+    : [];
   const chatPane = (
     <ChatShell
       banner={
@@ -2163,30 +2209,7 @@ export function ChatScreen() {
       subtitle={activeWorkspacePath ?? "codex-relay"}
       threadId={activeThreadId}
       title={activeThread?.title ?? "Codex Relay"}
-      trailingActions={[
-        {
-          disabled: isRunning,
-          icon: "newThread",
-          label: "New thread",
-          onPress: createNewThread,
-        },
-        {
-          icon: usesWideLayout ? (isWidePreviewVisible ? "previewHide" : "preview") : "preview",
-          label: usesWideLayout
-            ? isWidePreviewVisible
-              ? "Hide workspace preview"
-              : "Show workspace preview"
-            : "Workspace preview",
-          onPress: usesWideLayout
-            ? toggleWorkspacePreview
-            : () =>
-                openWorkspacePreview({
-                  protocol: WORKSPACE_PREVIEW_OPEN_PROTOCOL,
-                  tab: "git",
-                  workspacePath: activeWorkspacePath,
-                }),
-        },
-      ]}
+      trailingActions={chatTrailingActions}
       workspacePath={activeWorkspacePath}
     />
   );
@@ -2246,7 +2269,7 @@ export function ChatScreen() {
             </>
           ) : null}
         </View>
-      ) : (
+      ) : hasPairedSession ? (
         <PagerView
           ref={pagerRef}
           initialPage={activePagerPage}
@@ -2260,6 +2283,8 @@ export function ChatScreen() {
             {workspacePreviewPane}
           </View>
         </PagerView>
+      ) : (
+        <View style={styles.pagerPage}>{chatPane}</View>
       )}
       {copyToast ? (
         <AppToast
@@ -2328,13 +2353,56 @@ export function ChatScreen() {
         visible={isScannerOpen}
       >
         <View style={styles.scannerScreen}>
-          <CameraView
-            active={isScannerOpen}
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-            facing="back"
-            onBarcodeScanned={isHandlingScan ? undefined : handleBarcodeScanned}
-            style={styles.camera}
-          />
+          {cameraPermission?.granted ? (
+            <CameraView
+              active={isScannerOpen}
+              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+              facing="back"
+              onBarcodeScanned={isHandlingScan ? undefined : handleBarcodeScanned}
+              style={styles.camera}
+            />
+          ) : (
+            <View style={styles.scannerPermissionPanel}>
+              <View
+                accessible
+                accessibilityLabel="Camera access is off. Allow camera access to scan the connection QR."
+                style={styles.scannerPermissionCard}
+              >
+                <ThemedText type="smallBold" style={styles.scannerPermissionTitle}>
+                  Camera access is off
+                </ThemedText>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={styles.scannerPermissionCopy}
+                >
+                  Allow camera access to scan the connection QR, or close this screen and pair
+                  another way.
+                </ThemedText>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    cameraPermission?.canAskAgain === false
+                      ? "Open app settings for camera access"
+                      : "Try camera permission again"
+                  }
+                  onPress={
+                    cameraPermission?.canAskAgain === false
+                      ? () => void Linking.openSettings()
+                      : () => void retryCameraPermission()
+                  }
+                  style={({ pressed }) => [
+                    styles.scannerPermissionAction,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <ThemedText type="smallBold" style={styles.scannerPermissionActionText}>
+                    {cameraPermission?.canAskAgain === false ? "Open Settings" : "Try Again"}
+                  </ThemedText>
+                </Pressable>
+              </View>
+            </View>
+          )}
           <SafeAreaView edges={["top", "left", "right"]} style={styles.scannerOverlay}>
             <View style={styles.scannerHeader}>
               <ThemedText type="smallBold" style={styles.scannerTitle}>
@@ -2807,6 +2875,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     textAlign: "center",
+  },
+  scannerPermissionPanel: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: Spacing.four,
+  },
+  scannerPermissionCard: {
+    backgroundColor: Colors.dark.backgroundElement,
+    borderColor: "rgba(255, 255, 255, 0.14)",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: Spacing.three,
+    maxWidth: 340,
+    padding: Spacing.four,
+    width: "100%",
+  },
+  scannerPermissionTitle: {
+    fontSize: 17,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  scannerPermissionCopy: {
+    textAlign: "center",
+  },
+  scannerPermissionAction: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(132, 145, 165, 0.24)",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 40,
+    justifyContent: "center",
+    paddingHorizontal: Spacing.three,
+  },
+  scannerPermissionActionText: {
+    color: Colors.dark.text,
   },
   manualScreen: {
     backgroundColor: Colors.dark.background,
