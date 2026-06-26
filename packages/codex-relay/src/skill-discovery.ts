@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -67,11 +67,23 @@ export async function listAvailableSkills(
 
 async function findSkillFiles(root: SkillSearchRoot) {
   const found: Array<SkillSearchRoot & { path: string }> = [];
+  const visitedDirectories = new Set<string>();
 
   async function walk(path: string, depth: number) {
     if (depth < 0) {
       return;
     }
+
+    let realDirectoryPath: string;
+    try {
+      realDirectoryPath = await realpath(path);
+    } catch {
+      return;
+    }
+    if (visitedDirectories.has(realDirectoryPath)) {
+      return;
+    }
+    visitedDirectories.add(realDirectoryPath);
 
     let entries: Dirent[];
     try {
@@ -82,11 +94,12 @@ async function findSkillFiles(root: SkillSearchRoot) {
 
     for (const entry of entries) {
       const entryPath = join(path, entry.name);
-      if (entry.isFile() && entry.name === "SKILL.md") {
+      const kind = await directoryEntryKind(entry, entryPath);
+      if (kind === "file" && entry.name === "SKILL.md") {
         found.push({ ...root, path: entryPath });
         continue;
       }
-      if (!entry.isDirectory() || entry.name === "node_modules") {
+      if (kind !== "directory" || entry.name === "node_modules") {
         continue;
       }
       await walk(entryPath, depth - 1);
@@ -95,6 +108,31 @@ async function findSkillFiles(root: SkillSearchRoot) {
 
   await walk(root.path, root.maxDepth);
   return found;
+}
+
+async function directoryEntryKind(entry: Dirent, entryPath: string) {
+  if (entry.isFile()) {
+    return "file";
+  }
+  if (entry.isDirectory()) {
+    return "directory";
+  }
+  if (!entry.isSymbolicLink()) {
+    return null;
+  }
+
+  try {
+    const target = await stat(entryPath);
+    if (target.isFile()) {
+      return "file";
+    }
+    if (target.isDirectory()) {
+      return "directory";
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 async function readSkill(entry: SkillSearchRoot & { path: string }): Promise<AgentSkill | null> {
@@ -127,7 +165,7 @@ async function readSkill(entry: SkillSearchRoot & { path: string }): Promise<Age
 
 function parseSkillMarkdown(markdown: string): ParsedSkill {
   const frontmatter = parseFrontmatter(markdown);
-  const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const heading = firstMarkdownHeading(markdownBody(markdown));
   return {
     description: frontmatter.description,
     displayName: heading ? cleanHeading(heading) : undefined,
@@ -146,14 +184,75 @@ function parseFrontmatter(markdown: string) {
   }
 
   const fields: Record<string, string> = {};
-  for (const line of markdown.slice(4, end).split("\n")) {
+  const lines = markdown.slice(4, end).split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
     if (!match) {
       continue;
     }
-    fields[match[1]] = unquoteYamlScalar(match[2].trim());
+    const key = match[1];
+    const value = match[2].trim();
+    if (isBlockScalar(value)) {
+      const blockLines: string[] = [];
+      while (
+        index + 1 < lines.length &&
+        (lines[index + 1].trim() === "" || /^\s/.test(lines[index + 1]))
+      ) {
+        index += 1;
+        blockLines.push(lines[index].replace(/^\s+/, ""));
+      }
+      fields[key] = formatBlockScalar(value, blockLines);
+      continue;
+    }
+    fields[key] = unquoteYamlScalar(value);
   }
   return fields;
+}
+
+function isBlockScalar(value: string) {
+  return ["|", "|-", "|+", ">", ">-", ">+"].includes(value);
+}
+
+function formatBlockScalar(marker: string, lines: string[]) {
+  const trimmedLines = lines.map((line) => line.trimEnd());
+  if (marker.startsWith("|")) {
+    return trimmedLines.join("\n").trim();
+  }
+  return trimmedLines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function markdownBody(markdown: string) {
+  if (!markdown.startsWith("---\n")) {
+    return markdown;
+  }
+  const end = markdown.indexOf("\n---", 4);
+  if (end < 0) {
+    return markdown;
+  }
+  return markdown.slice(end + 4).replace(/^\r?\n/, "");
+}
+
+function firstMarkdownHeading(markdown: string) {
+  let fence: string | undefined;
+  for (const line of markdown.split("\n")) {
+    const fenceMatch = line.match(/^\s*(```|~~~)/);
+    if (fenceMatch) {
+      fence = fence ? undefined : fenceMatch[1];
+      continue;
+    }
+    if (fence) {
+      continue;
+    }
+    const heading = line.match(/^#\s+(.+)$/)?.[1]?.trim();
+    if (heading) {
+      return heading;
+    }
+  }
+  return undefined;
 }
 
 function unquoteYamlScalar(value: string) {
