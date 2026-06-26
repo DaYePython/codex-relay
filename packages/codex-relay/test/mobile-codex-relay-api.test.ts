@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearCodexRelayServerUrlState,
   fallbackCodexRelayServerUrl,
@@ -7,6 +7,13 @@ import {
   saveCodexRelayServerUrlCandidates,
   setCodexRelayServerUrl,
 } from "../../../apps/mobile/src/lib/codex-relay-server-url-storage.js";
+import { requestWithNetworkTimeout } from "../../../apps/mobile/src/lib/network-timeout.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  clearCodexRelayServerUrlState();
+});
 
 describe("mobile Codex Relay API session storage", () => {
   it("clears the selected server URL and stored candidates", () => {
@@ -25,5 +32,20 @@ describe("mobile Codex Relay API session storage", () => {
         url: fallbackCodexRelayServerUrl,
       },
     ]);
+  });
+
+  it("rejects bootstrap requests when the network hangs", async () => {
+    vi.useFakeTimers();
+
+    const request = requestWithNetworkTimeout(
+      new Promise<Response>(() => undefined),
+      undefined,
+      25,
+    );
+    const caught = request.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(caught).resolves.toMatchObject({ message: "Request timed out." });
   });
 });

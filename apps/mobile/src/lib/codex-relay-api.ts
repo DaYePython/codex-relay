@@ -96,6 +96,7 @@ import {
   parseThreadRunStreamPayload,
   threadRunStreamEventTypes,
 } from "./thread-run-stream";
+import { requestWithNetworkTimeout, withTimeout } from "./network-timeout";
 import {
   isClientTokenExpiredByInactivity,
   markInactiveSessionExpired,
@@ -340,7 +341,7 @@ async function waitForPairingApproval(serverUrl: string, approvalCode: string) {
 async function fetchWithNetworkContext(url: string, init?: NetworkRequestInit) {
   if (isLocalhostUrl(url)) {
     try {
-      return await requestWithOptionalTimeout(fetch(url, init), init?.timeoutMs);
+      return await requestWithNetworkTimeout(fetch(url, init), init?.timeoutMs);
     } catch (error) {
       throw new Error(
         `Network request failed via fetch for ${url}: ${errorMessage(error, "network error")}`,
@@ -352,9 +353,9 @@ async function fetchWithNetworkContext(url: string, init?: NetworkRequestInit) {
   const transport = useDirectFetch ? "dfetch" : "nitroFetch";
   try {
     if (useDirectFetch) {
-      return await requestWithOptionalTimeout(dfetch(url, init), init?.timeoutMs);
+      return await requestWithNetworkTimeout(dfetch(url, init), init?.timeoutMs);
     }
-    return await requestWithOptionalTimeout(nitroFetch(url, init), init?.timeoutMs);
+    return await requestWithNetworkTimeout(nitroFetch(url, init), init?.timeoutMs);
   } catch (error) {
     throw new Error(
       `Network request failed via ${transport} for ${url}: ${errorMessage(error, "network error")}`,
@@ -1342,17 +1343,6 @@ function errorMessage(payload: unknown, fallback: string) {
     "message" in payload.error
     ? String(payload.error.message)
     : fallback;
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-  return new Promise<T>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Request timed out.")), timeoutMs);
-    promise.then(resolve, reject).finally(() => clearTimeout(timeout));
-  });
-}
-
-function requestWithOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number | undefined) {
-  return timeoutMs && timeoutMs > 0 ? withTimeout(promise, timeoutMs) : promise;
 }
 
 function errorCode(payload: unknown) {
