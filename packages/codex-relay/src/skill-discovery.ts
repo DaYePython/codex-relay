@@ -62,7 +62,10 @@ export async function listAvailableSkills(
     (entry) => entry.path,
   );
   const skills = await Promise.all(skillPaths.map(readSkill));
-  return skills.filter((skill): skill is AgentSkill => Boolean(skill)).sort(compareSkills);
+  return dedupe(
+    skills.filter((skill): skill is AgentSkill => Boolean(skill)).sort(compareSkills),
+    skillIdentityKey,
+  );
 }
 
 async function findSkillFiles(root: SkillSearchRoot) {
@@ -292,6 +295,16 @@ function compareSkills(a: AgentSkill, b: AgentSkill) {
     sourceOrder[a.source] - sourceOrder[b.source] ||
     a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" })
   );
+}
+
+function skillIdentityKey(skill: AgentSkill) {
+  return [
+    skill.source,
+    skill.name,
+    skill.displayName,
+    skill.description ?? "",
+    skill.sourceLabel,
+  ].join("\n");
 }
 
 function dedupe<T>(items: T[], keyFor: (item: T) => string) {

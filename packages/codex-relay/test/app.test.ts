@@ -671,6 +671,58 @@ describe("Codex Relay server routes", () => {
     );
   });
 
+  it("deduplicates repeated plugin cache skills by logical skill identity", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const homePath = await mkdtemp(join(tmpdir(), "codex-relay-home-"));
+    const codexHome = join(homePath, ".codex");
+    const pluginSkillPaths = [
+      join(codexHome, "plugins", "cache", "omo", "4.13.0", "skills", "visual-qa"),
+      join(codexHome, "plugins", "cache", "omo-copy", "4.13.0", "skills", "visual-qa"),
+    ];
+    for (const skillPath of pluginSkillPaths) {
+      await mkdir(skillPath, { recursive: true });
+      await writeFile(
+        join(skillPath, "SKILL.md"),
+        [
+          "---",
+          "name: visual-qa",
+          "description: Rigorous visual QA for any UI you built or changed.",
+          "---",
+          "",
+          "# Visual QA - Dual-Oracle Web and TUI Visual Verification",
+          "",
+        ].join("\n"),
+      );
+    }
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    const app = createApp({ codex: createMockCodex(), workspacePath });
+
+    try {
+      const response = await app.request("/v1/skills");
+      const body = await response.json();
+      const visualQaSkills = body.skills.filter(
+        (skill: { readonly name: string }) => skill.name === "visual-qa",
+      );
+
+      expect(response.status).toBe(200);
+      expect(visualQaSkills).toHaveLength(1);
+      expect(visualQaSkills[0]).toMatchObject({
+        name: "visual-qa",
+        displayName: "Visual QA - Dual-Oracle Web and TUI Visual Verification",
+        description: "Rigorous visual QA for any UI you built or changed.",
+        source: "plugin",
+        sourceLabel: "plugin",
+      });
+    } finally {
+      if (previousCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = previousCodexHome;
+      }
+    }
+  });
+
   it("lists directories outside the configured workspace when a cwd points there", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const externalPath = await mkdtemp(join(tmpdir(), "codex-relay-external-"));
