@@ -3032,12 +3032,12 @@ const styles = StyleSheet.create({
     bottom: "100%",
     transform: [{ translateY: 6 }],
     zIndex: 2,
-    width: "80%",
+    width: "86%",
   },
   queueRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 12,
+    gap: 14,
     minHeight: 38,
   },
   goalRow: {
@@ -3146,15 +3146,16 @@ const styles = StyleSheet.create({
     minWidth: 0,
     opacity: 0.88,
     overflow: "hidden",
+    paddingRight: 2,
   },
   queueActions: {
     alignItems: "center",
     flexShrink: 0,
     flexDirection: "row",
-    gap: 8,
+    gap: 6,
     justifyContent: "flex-end",
     height: 34,
-    width: 154,
+    width: 146,
   },
   queueSteerButton: {
     alignItems: "center",
@@ -3162,8 +3163,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     height: 28,
     justifyContent: "center",
-    paddingHorizontal: 8,
-    width: 82,
+    width: 80,
   },
   queueSteerPill: {
     alignItems: "center",
@@ -3175,7 +3175,7 @@ const styles = StyleSheet.create({
     gap: 4,
     height: 28,
     justifyContent: "center",
-    width: 82,
+    width: 80,
   },
   queueSteerPillPressed: {
     backgroundColor: "rgba(255, 255, 255, 0.22)",
