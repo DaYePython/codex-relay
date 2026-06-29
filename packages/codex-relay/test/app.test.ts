@@ -679,17 +679,17 @@ describe("Codex Relay server routes", () => {
       join(codexHome, "plugins", "cache", "omo", "4.13.0", "skills", "visual-qa"),
       join(codexHome, "plugins", "cache", "omo-copy", "4.13.0", "skills", "visual-qa"),
     ];
-    for (const skillPath of pluginSkillPaths) {
+    for (const [index, skillPath] of pluginSkillPaths.entries()) {
       await mkdir(skillPath, { recursive: true });
       await writeFile(
         join(skillPath, "SKILL.md"),
         [
           "---",
           "name: visual-qa",
-          "description: Rigorous visual QA for any UI you built or changed.",
+          `description: Rigorous visual QA for any UI you built or changed.${index === 0 ? "" : " Updated cache copy."}`,
           "---",
           "",
-          "# Visual QA - Dual-Oracle Web and TUI Visual Verification",
+          `# Visual QA - Dual-Oracle Web and TUI Visual Verification${index === 0 ? "" : " v2"}`,
           "",
         ].join("\n"),
       );

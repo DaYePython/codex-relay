@@ -21,17 +21,35 @@ describe("relay watchdog service command", () => {
     ]);
   });
 
-  it("checks the local relay version endpoint on the configured port", () => {
+  it("checks the relay version endpoint on the configured host and port", () => {
     expect(relayHealthUrl({ CODEX_RELAY_PORT: "9999", PORT: "8787" })).toBe(
       "http://127.0.0.1:9999/version",
     );
     expect(relayHealthUrl({ PORT: "8788" })).toBe("http://127.0.0.1:8788/version");
+    expect(relayHealthUrl({ RELAY_HEALTH_CHECK_HOST: "192.168.0.22", PORT: "8787" })).toBe(
+      "http://192.168.0.22:8787/version",
+    );
   });
 
   it("treats failed health requests as unhealthy", async () => {
     await expect(
-      isRelayHealthy(async () => ({ ok: true }), "http://127.0.0.1:8787/version"),
+      isRelayHealthy(
+        async () => ({
+          json: async () => ({ ok: true, service: "codex-relay-server" }),
+          ok: true,
+        }),
+        "http://127.0.0.1:8787/version",
+      ),
     ).resolves.toBe(true);
+    await expect(
+      isRelayHealthy(
+        async () => ({
+          json: async () => ({ service: "hot-updater-cloud-update-runtime" }),
+          ok: true,
+        }),
+        "http://127.0.0.1:8787/version",
+      ),
+    ).resolves.toBe(false);
     await expect(
       isRelayHealthy(async () => {
         throw new Error("connection refused");

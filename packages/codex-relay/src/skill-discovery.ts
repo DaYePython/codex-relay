@@ -298,13 +298,7 @@ function compareSkills(a: AgentSkill, b: AgentSkill) {
 }
 
 function skillIdentityKey(skill: AgentSkill) {
-  return [
-    skill.source,
-    skill.name,
-    skill.displayName,
-    skill.description ?? "",
-    skill.sourceLabel,
-  ].join("\n");
+  return [skill.source, skill.name].join("\n");
 }
 
 function dedupe<T>(items: T[], keyFor: (item: T) => string) {
