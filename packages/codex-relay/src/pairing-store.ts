@@ -1,8 +1,8 @@
-import { connect } from "@tursodatabase/database";
 import { dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { fromByteArray, toByteArray } from "base64-js";
 
+import { connect } from "./libsql-database.js";
 import type { SecureSession } from "./secure-transport.js";
 
 export type ClientSession = {
@@ -145,11 +145,15 @@ export async function createTursoPairingSessionStore(path: string): Promise<Pair
       return { ...pending, approved: true };
     },
     async clearAll() {
-      const result = await db.transaction(async () => {
-        const sessionRow = await db.prepare("SELECT COUNT(*) AS count FROM pairing_sessions").get();
-        const pendingRow = await db.prepare("SELECT COUNT(*) AS count FROM pending_pairings").get();
-        await db.prepare("DELETE FROM pairing_sessions").run();
-        await db.prepare("DELETE FROM pending_pairings").run();
+      const result = await db.transaction(async (transaction) => {
+        const sessionRow = await transaction
+          .prepare("SELECT COUNT(*) AS count FROM pairing_sessions")
+          .get();
+        const pendingRow = await transaction
+          .prepare("SELECT COUNT(*) AS count FROM pending_pairings")
+          .get();
+        await transaction.prepare("DELETE FROM pairing_sessions").run();
+        await transaction.prepare("DELETE FROM pending_pairings").run();
         return {
           pendingPairingsCleared: Number(pendingRow?.count ?? 0),
           sessionsCleared: Number(sessionRow?.count ?? 0),
@@ -278,21 +282,23 @@ export async function createTursoPairingSessionStore(path: string): Promise<Pair
     async rotateSession(oldTokenHash, newTokenHash, session) {
       const now = Date.now();
       const secure = encodeSecureSession(session.secureSession);
-      await db.transaction(async () => {
-        await db.prepare("DELETE FROM pairing_sessions WHERE token_hash = ?").run(oldTokenHash);
+      await db.transaction(async (transaction) => {
+        await transaction
+          .prepare("DELETE FROM pairing_sessions WHERE token_hash = ?")
+          .run(oldTokenHash);
         if (session.clientSessionId) {
-          await db
+          await transaction
             .prepare("DELETE FROM pairing_sessions WHERE client_session_id = ?")
             .run(session.clientSessionId);
           if (session.clientName) {
-            await db
+            await transaction
               .prepare(
                 "DELETE FROM pairing_sessions WHERE client_session_id IS NULL AND client_name = ?",
               )
               .run(session.clientName);
           }
         }
-        await db
+        await transaction
           .prepare(
             `INSERT INTO pairing_sessions (
                token_hash,
