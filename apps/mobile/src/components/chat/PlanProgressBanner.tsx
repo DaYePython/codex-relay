@@ -23,6 +23,14 @@ import {
   type TimelineSubagentSummary,
 } from "./plan-progress";
 
+const MAX_VISIBLE_SUBAGENT_GLYPHS = 4;
+const SUBAGENT_GLYPH_STYLES = [
+  { color: Colors.dark.agentGreen, name: "agentAsterisk" },
+  { color: Colors.dark.agentViolet, name: "agentGem" },
+  { color: Colors.dark.agentCyan, name: "agentAtom" },
+  { color: Colors.dark.agentTeal, name: "agentShell" },
+] as const;
+
 export function PlanProgressBanner({
   progress,
   subagents,
@@ -70,7 +78,7 @@ export function PlanProgressBanner({
             <View style={styles.trailingGroup}>
               {subagents ? (
                 <Animated.View entering={FadeIn.duration(120)} style={styles.compactSubagents}>
-                  <SubagentStatusGlyphs agents={subagents.agents} />
+                  <SubagentGlyphs agents={subagents.agents} />
                   <ThemedText type="code" style={styles.subagentCountText}>
                     ×{subagentCount}
                   </ThemedText>
@@ -124,7 +132,7 @@ export function PlanProgressBanner({
                 </ThemedText>
               </View>
               <View style={styles.subagentSummaryRow}>
-                <SubagentGlyphs agents={subagents.agents} limit={4} />
+                <SubagentGlyphs agents={subagents.agents} />
                 <ThemedText type="code" numberOfLines={1} style={styles.subagentStatusText}>
                   {subagentText}
                 </ThemedText>
@@ -137,7 +145,7 @@ export function PlanProgressBanner({
   );
 }
 
-function SubagentGlyphs({ agents, limit }: { agents: readonly TimelineSubagent[]; limit: number }) {
+function SubagentGlyphs({ agents }: { agents: readonly TimelineSubagent[] }) {
   return (
     <View
       accessibilityElementsHidden
@@ -145,90 +153,33 @@ function SubagentGlyphs({ agents, limit }: { agents: readonly TimelineSubagent[]
       importantForAccessibility="no-hide-descendants"
       style={styles.subagentGlyphs}
     >
-      {agents.slice(0, limit).map((agent, index) => (
-        <Animated.View
-          entering={FadeIn.delay(index * 35).duration(120)}
-          key={agent.id}
-          style={styles.subagentGlyph}
-        >
-          <Icon
-            name={subagentIconName(agent.status)}
-            size={11}
-            strokeWidth={2.2}
-            tintColor={subagentColor(agent.status, index)}
-          />
-        </Animated.View>
-      ))}
+      {agents.slice(0, MAX_VISIBLE_SUBAGENT_GLYPHS).map((agent, index) => {
+        const glyph = subagentGlyphStyle(index);
+        return (
+          <Animated.View
+            entering={FadeIn.delay(index * 35).duration(120)}
+            key={agent.id}
+            style={styles.subagentGlyph}
+          >
+            <Icon name={glyph.name} size={12} strokeWidth={2.2} tintColor={glyph.color} />
+          </Animated.View>
+        );
+      })}
     </View>
   );
 }
 
-function SubagentStatusGlyphs({ agents }: { agents: readonly TimelineSubagent[] }) {
-  const counts = subagentStatusCounts(agents);
-  const statuses = (["running", "completed", "interrupted", "failed"] as const).filter(
-    (status) => counts[status] > 0,
-  );
-
-  return (
-    <View
-      accessibilityElementsHidden
-      accessible={false}
-      importantForAccessibility="no-hide-descendants"
-      style={styles.subagentGlyphs}
-    >
-      {statuses.map((status, index) => (
-        <Animated.View
-          entering={FadeIn.delay(index * 35).duration(120)}
-          key={status}
-          style={styles.aggregateSubagentGlyph}
-        >
-          <Icon
-            name={subagentIconName(status)}
-            size={11}
-            strokeWidth={2.2}
-            tintColor={subagentColor(status, index)}
-          />
-          {counts[status] > 1 ? (
-            <ThemedText type="code" style={styles.aggregateSubagentCount}>
-              {counts[status]}
-            </ThemedText>
-          ) : null}
-        </Animated.View>
-      ))}
-    </View>
-  );
-}
-
-function subagentIconName(status: TimelineSubagentStatus) {
-  switch (status) {
-    case "running":
-      return "running";
-    case "completed":
-      return "goal";
-    case "interrupted":
-      return "stop";
-    case "failed":
-      return "warning";
+function subagentGlyphStyle(index: number) {
+  switch (index % SUBAGENT_GLYPH_STYLES.length) {
+    case 0:
+      return SUBAGENT_GLYPH_STYLES[0];
+    case 1:
+      return SUBAGENT_GLYPH_STYLES[1];
+    case 2:
+      return SUBAGENT_GLYPH_STYLES[2];
+    default:
+      return SUBAGENT_GLYPH_STYLES[3];
   }
-}
-
-function subagentColor(status: TimelineSubagentStatus, index: number) {
-  if (status === "completed") {
-    return "#8FD19E";
-  }
-  if (status === "failed") {
-    return "#D84F4F";
-  }
-  if (status === "interrupted") {
-    return Colors.dark.textSecondary;
-  }
-
-  const activeColors = [
-    Colors.dark.powerBlue,
-    Colors.dark.powerViolet,
-    Colors.dark.powerMagenta,
-  ] as const;
-  return activeColors[index % activeColors.length];
 }
 
 function subagentStatusText(agents: readonly TimelineSubagent[]) {
@@ -303,17 +254,6 @@ function PlanProgressMarker({ status }: { status: TimelinePlanProgressStepStatus
 }
 
 const styles = StyleSheet.create({
-  aggregateSubagentCount: {
-    color: Colors.dark.textSecondary,
-    fontSize: 8,
-    lineHeight: 11,
-  },
-  aggregateSubagentGlyph: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 1,
-    minWidth: 12,
-  },
   banner: {
     backgroundColor: "rgba(42, 42, 42, 0.9)",
     borderColor: "rgba(255, 255, 255, 0.1)",

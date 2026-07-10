@@ -4,6 +4,8 @@ import {
   ArrowRight,
   ArrowRightToLine,
   ArrowUp,
+  Asterisk,
+  Atom,
   Check,
   ChevronDown,
   ChevronRight,
@@ -14,6 +16,7 @@ import {
   File,
   FileDiff,
   Folder,
+  Gem,
   GitBranch,
   GitPullRequest,
   Globe,
@@ -32,6 +35,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Shell,
   Shield,
   ShieldCheck,
   SlidersHorizontal,
@@ -47,6 +51,10 @@ import {
 import type { ComponentProps, ComponentType } from "react";
 
 export type AppIconName =
+  | "agentAsterisk"
+  | "agentAtom"
+  | "agentGem"
+  | "agentShell"
   | "archive"
   | "attach"
   | "branch"
@@ -98,6 +106,10 @@ export type AppIconName =
 type LucideComponent = ComponentType<ComponentProps<typeof Search>>;
 
 const iconComponents: Record<AppIconName, LucideComponent> = {
+  agentAsterisk: Asterisk,
+  agentAtom: Atom,
+  agentGem: Gem,
+  agentShell: Shell,
   archive: Archive,
   attach: Image,
   branch: GitBranch,

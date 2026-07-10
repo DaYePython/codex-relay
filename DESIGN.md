@@ -26,6 +26,7 @@ translucent controls, and monospace URL/code details.
 | Power/fast          | `Colors.*.powerBlue`             | `#3E96FF` | `#3E96FF` | Faster end of the Power spectrum    |
 | Power/deep          | `Colors.*.powerViolet`           | `#7868FF` | `#7868FF` | High-reasoning spectrum transition  |
 | Power/ultra         | `Colors.*.powerMagenta`          | `#C06DFF` | `#C06DFF` | Ultra endpoint and peak accents     |
+| Agent/identity      | `Colors.*.agent*`                | varied    | varied    | Decorative subagent identities      |
 
 ### Rules
 
@@ -112,14 +113,18 @@ All spacing derives from the existing `Spacing` constants.
 - **Subagents**: subagent activity from the same running turn is folded into this
   surface instead of appearing as duplicate timeline cards. The collapsed row
   shows a tiny colored agent cluster and count; expansion adds one subdued
-  `Subagents` summary row below the plan steps. Show at most four glyphs while
-  preserving the full detected count in text and accessibility labels.
+  `Subagents` summary row below the plan steps. Show at most four distinct,
+  decorative identity glyphs while preserving the full detected count in text
+  and accessibility labels. Glyph shape and color are assigned by visible agent
+  order and never encode running, completed, interrupted, or failed state.
 - **Scope**: only activity associated with the current plan turn is summarized.
   Subagent messages without an active plan, and activity from earlier turns,
   remain in the timeline so operational history is not lost.
-- **Status**: running, completed, interrupted, and failed states use existing
-  plan/status colors. Unknown transport statuses stay conservative and are
-  treated as running until the relay reports a terminal state.
+- **Status**: running, completed, interrupted, and failed totals remain in the
+  summary copy and spoken label, not in the decorative identity glyphs. Plan
+  steps continue to use existing plan/status colors. Unknown transport statuses
+  stay conservative and are treated as running until the relay reports a
+  terminal state.
 - **Motion**: newly detected agents fade into the summary without moving or
   resizing the banner controls. Reduced-motion follows the platform animation
   policy through the shared Reanimated configuration.

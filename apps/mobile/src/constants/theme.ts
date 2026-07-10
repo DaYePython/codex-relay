@@ -17,6 +17,10 @@ export const Colors = {
     powerBlue: "#3E96FF",
     powerViolet: "#7868FF",
     powerMagenta: "#C06DFF",
+    agentGreen: "#6BBF59",
+    agentViolet: "#9B84D6",
+    agentCyan: "#48B9D9",
+    agentTeal: "#4FB4AE",
   },
   dark: {
     text: "#F2F2F2",
@@ -29,6 +33,10 @@ export const Colors = {
     powerBlue: "#3E96FF",
     powerViolet: "#7868FF",
     powerMagenta: "#C06DFF",
+    agentGreen: "#6BBF59",
+    agentViolet: "#9B84D6",
+    agentCyan: "#48B9D9",
+    agentTeal: "#4FB4AE",
   },
 } as const;
 
