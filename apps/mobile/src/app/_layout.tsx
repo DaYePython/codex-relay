@@ -19,6 +19,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { AnimatedSplashOverlay } from "@/components/animated-icon";
 import { AppToast } from "@/components/ui/toast";
+import { useInitialPushNotificationRegistration } from "@/hooks/use-initial-push-notification-registration";
 import { addHotUpdaterLog, formatHotUpdaterProgress } from "@/lib/hot-updater-logs";
 import {
   configurePushNotificationPresentation,
@@ -129,6 +130,7 @@ async function checkForLaunchUpdate() {
 }
 
 function TabLayout() {
+  useInitialPushNotificationRegistration();
   const [fontsLoaded] = useFonts({
     GeistMono: require("../../assets/fonts/GeistMono-Regular.ttf"),
     "GeistMono-Medium": require("../../assets/fonts/GeistMono-Medium.ttf"),

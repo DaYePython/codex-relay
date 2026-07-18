@@ -36,7 +36,9 @@ import {
   useHotUpdaterLogs,
 } from "@/lib/hot-updater-logs";
 import {
+  defaultPushNotificationPreferences,
   getExpoPushToken,
+  markInitialPushNotificationRegistrationCompleted,
   pushNotificationPlatform,
   supportsPushNotifications,
 } from "@/lib/push-notifications";
@@ -53,10 +55,6 @@ import { chatStore$, resetChatSessionState, setConnection, setServerUrl } from "
 
 const hotUpdaterBaseUrl = process.env.EXPO_PUBLIC_HOT_UPDATER_BASE_URL?.trim();
 const hotUpdaterBaseUrlStatus = hotUpdaterBaseUrl ? "configured" : "missing";
-const defaultPushNotificationPreferences = {
-  actionRequired: false,
-  turnTerminal: false,
-};
 const pushNotificationTrackColor = {
   false: "rgba(255, 255, 255, 0.16)",
   true: "#2CA36F",
@@ -231,6 +229,7 @@ export default function SettingsScreen() {
     const previousPreferences = pushNotificationPreferences;
     const nextPreferences = { ...previousPreferences, [preference]: value };
     hapticSelection();
+    markInitialPushNotificationRegistrationCompleted();
     setPushNotificationPreferences(nextPreferences);
     setPushNotificationsUpdating(true);
 

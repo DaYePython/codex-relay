@@ -1,8 +1,26 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
+import type { PushNotificationPreferences } from "codex-relay/api-schema";
 import { Platform } from "react-native";
 
+import { codexRelayStorage } from "./codex-relay-server-url-storage";
+
+const initialPushNotificationRegistrationStorageKey =
+  "codex-relay.initial-push-notification-registration-completed";
+
+export const defaultPushNotificationPreferences: PushNotificationPreferences = {
+  actionRequired: true,
+  turnTerminal: true,
+};
+
 let foregroundNotificationHandlerConfigured = false;
+
+export class PushNotificationPermissionDeniedError extends Error {
+  constructor() {
+    super("Notifications are not allowed for Codex Relay.");
+    this.name = "PushNotificationPermissionDeniedError";
+  }
+}
 
 export function configurePushNotificationPresentation() {
   if (!supportsPushNotifications() || foregroundNotificationHandlerConfigured) {
@@ -38,7 +56,7 @@ export async function getExpoPushToken() {
       ? existingPermissions
       : await Notifications.requestPermissionsAsync();
   if (permissions.status !== "granted") {
-    throw new Error("Notifications are not allowed for Codex Relay.");
+    throw new PushNotificationPermissionDeniedError();
   }
 
   const projectId = expoProjectId();
@@ -46,6 +64,14 @@ export async function getExpoPushToken() {
     throw new Error("This app build is missing its Expo project identifier.");
   }
   return (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+}
+
+export function hasCompletedInitialPushNotificationRegistration() {
+  return codexRelayStorage.getBoolean(initialPushNotificationRegistrationStorageKey) ?? false;
+}
+
+export function markInitialPushNotificationRegistrationCompleted() {
+  codexRelayStorage.set(initialPushNotificationRegistrationStorageKey, true);
 }
 
 export function notificationResponseThreadId(response: Notifications.NotificationResponse) {
