@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Append EAS Android build links to an existing GitHub Release body.
+ * Append EAS Android build links to a GitHub Release body.
  *
  * Usage:
  *   node scripts/append-eas-links-to-release.mjs \
@@ -9,7 +9,8 @@
  *     --eas-json apps/mobile/eas-build-result.json
  *
  * Resolves the release tag with fallbacks when changesets uses a different
- * naming scheme (e.g. v1.5.0). Requires `gh` and GH_TOKEN / GITHUB_TOKEN.
+ * naming scheme (e.g. v1.5.0). If no matching release exists (common on forks
+ * or workflow_dispatch), creates one. Requires `gh` and GH_TOKEN / GITHUB_TOKEN.
  */
 
 import { execFileSync } from "node:child_process";
@@ -85,7 +86,7 @@ function tryGh(args) {
   }
 }
 
-function resolveReleaseTag(preferredTag, version) {
+function findExistingReleaseTag(preferredTag, version) {
   const candidates = [
     preferredTag,
     `codex-relay@${version}`,
@@ -140,10 +141,47 @@ function resolveReleaseTag(preferredTag, version) {
     }
   }
 
-  console.error(
-    `Could not find a GitHub release for tag candidates: ${uniqueCandidates.join(", ")}`,
+  return null;
+}
+
+function ensureReleaseExists(preferredTag, version) {
+  const existingTag = findExistingReleaseTag(preferredTag, version);
+  if (existingTag) {
+    return existingTag;
+  }
+
+  // workflow_dispatch / forks may not have a changesets-created release yet.
+  // Create a lightweight release so EAS links have a place to land.
+  const releaseTag = preferredTag || `codex-relay@${version}`;
+  console.log(
+    `No GitHub release found for ${version}; creating release tag ${releaseTag}`,
   );
-  process.exit(1);
+
+  try {
+    runGh(
+      [
+        "release",
+        "create",
+        releaseTag,
+        "--title",
+        releaseTag,
+        "--notes",
+        `Release ${version}`,
+        "--target",
+        process.env.GITHUB_SHA || "HEAD",
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+  } catch (error) {
+    console.error(
+      `Could not find or create a GitHub release for tag ${releaseTag}:`,
+      error instanceof Error ? error.message : error,
+    );
+    process.exit(1);
+  }
+
+  console.log(`Created GitHub release tag: ${releaseTag}`);
+  return releaseTag;
 }
 
 function parseJsonPayload(raw) {
@@ -262,7 +300,7 @@ function stripExistingMobileSection(body) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const releaseTag = resolveReleaseTag(options.tag, options.version);
+  const releaseTag = ensureReleaseExists(options.tag, options.version);
   const buildInfo = extractBuildInfo(options.easJson);
 
   const existingBody = runGh([
