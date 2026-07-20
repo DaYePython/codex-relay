@@ -3,7 +3,8 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 export default function appConfig(_context: ConfigContext): ExpoConfig {
   return {
     name: "Codex Relay",
-    slug: "codex-relay",
+    slug: "codex-relay-android",
+    owner: "daye2026",
     version: "1.4.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
@@ -36,7 +37,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
         monochromeImage: "./assets/images/android-icon-monochrome.png",
       },
       predictiveBackGestureEnabled: false,
-      package: "com.gronstudio.codexrelay",
+      package: "com.daye2026.codexrelay",
       permissions: ["android.permission.CAMERA", "android.permission.POST_NOTIFICATIONS"],
     },
     web: {
@@ -87,6 +88,8 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
       "expo-system-ui",
       "expo-web-browser",
       "@hot-updater/react-native",
+      // Expo pulls org.brotli:dec:0.1.2 while hot-updater ships 1.2.0 as a JAR.
+      "./plugins/withExcludeBrotliDec",
       "react-native-enriched-markdown",
       [
         "expo-secure-store",
@@ -113,7 +116,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
     extra: {
       router: {},
       eas: {
-        projectId: "6659e28f-2ac7-4055-8f56-7b4ca5e65847",
+        projectId: "6c0067ee-2566-4320-8c45-34f430c342a8",
       },
     },
   };

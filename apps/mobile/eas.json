@@ -19,7 +19,10 @@
       "env": {
         "SHARP_IGNORE_GLOBAL_LIBVIPS": "1"
       },
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
       "node": "22.22.2",

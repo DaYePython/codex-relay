@@ -15,3 +15,4 @@ minimumReleaseAge: 0
 
 overrides:
   "@libsql/isomorphic-ws>ws": 8.21.0
+  expo-constants: ~56.0.21

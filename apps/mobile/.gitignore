@@ -13,5 +13,6 @@ expo-env.d.ts
 .env.hotupdater
 .hot-updater/output
 .hot-updater/log
-# hot-updater
-keys/
+# hot-updater signing keys (private key never committed; public key is safe)
+keys/*
+!keys/public-key.pem
