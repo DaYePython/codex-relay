@@ -1,11 +1,48 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const DEFAULT_APP_VERSION = "1.4.0";
+
+function resolveAppVersion(): string {
+  const environmentVersion = process.env.APP_VERSION?.trim();
+  if (environmentVersion) {
+    return environmentVersion;
+  }
+
+  // Tracked file overwritten by the release workflow so EAS cloud builds
+  // receive the published codex-relay version (gitignored files are not uploaded).
+  const appVersionFileCandidates = [
+    join(process.cwd(), "app-version.json"),
+    join(process.cwd(), "apps/mobile/app-version.json"),
+  ];
+
+  for (const appVersionPath of appVersionFileCandidates) {
+    if (!existsSync(appVersionPath)) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(readFileSync(appVersionPath, "utf8")) as {
+        version?: string;
+      };
+      const fileVersion = parsed.version?.trim();
+      if (fileVersion) {
+        return fileVersion;
+      }
+    } catch {
+      // Fall through to the default when the file is missing or invalid.
+    }
+  }
+
+  return DEFAULT_APP_VERSION;
+}
 
 export default function appConfig(_context: ConfigContext): ExpoConfig {
   return {
     name: "Codex Relay",
     slug: "codex-relay-android",
     owner: "daye2026",
-    version: "1.4.0",
+    version: resolveAppVersion(),
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "codex-relay",

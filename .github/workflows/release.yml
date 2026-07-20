@@ -4,6 +4,16 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "App/package version to stamp on the Android build (e.g. 1.5.0)"
+        required: true
+        type: string
+      release_tag:
+        description: "GitHub release tag to update (e.g. codex-relay@1.5.0). Leave empty to resolve from version."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -16,7 +26,11 @@ concurrency:
 jobs:
   release:
     name: Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -34,6 +48,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Create release pull request or publish
+        id: changesets
         uses: changesets/action@v1
         with:
           commit: "chore: release codex-relay"
@@ -43,3 +58,150 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  mobile-android:
+    name: Build Android preview
+    needs: release
+    if: >-
+      always() &&
+      (
+        (needs.release.result == 'success' && needs.release.outputs.published == 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Require EXPO_TOKEN
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN secret is required for EAS Android builds. Add it in repository secrets."
+            exit 1
+          fi
+
+      - name: Resolve version and release tag
+        id: resolve
+        env:
+          PUBLISHED_PACKAGES: ${{ needs.release.outputs.publishedPackages }}
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          DISPATCH_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const eventName = process.env.EVENT_NAME;
+          const publishedPackagesRaw = process.env.PUBLISHED_PACKAGES || "";
+          const dispatchVersion = (process.env.DISPATCH_VERSION || "").trim();
+          const dispatchReleaseTag = (process.env.DISPATCH_RELEASE_TAG || "").trim();
+
+          let packageName = "codex-relay";
+          let version = "";
+
+          if (eventName === "workflow_dispatch") {
+            version = dispatchVersion;
+            if (!version) {
+              console.error("workflow_dispatch requires a version input");
+              process.exit(1);
+            }
+          } else {
+            let publishedPackages = [];
+            try {
+              publishedPackages = JSON.parse(publishedPackagesRaw || "[]");
+            } catch (error) {
+              console.error("Failed to parse publishedPackages:", error);
+              process.exit(1);
+            }
+
+            const publishedPackage = publishedPackages.find(
+              (entry) => entry && entry.name === "codex-relay" && entry.version,
+            );
+
+            if (!publishedPackage) {
+              console.error(
+                "publishedPackages did not include codex-relay:",
+                publishedPackagesRaw,
+              );
+              process.exit(1);
+            }
+
+            packageName = publishedPackage.name;
+            version = publishedPackage.version;
+          }
+
+          const releaseTag = dispatchReleaseTag || `${packageName}@${version}`;
+
+          const outputPath = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(
+            outputPath,
+            `version=${version}\npackage_name=${packageName}\nrelease_tag=${releaseTag}\n`,
+          );
+
+          const appVersionPath = path.join(
+            "apps",
+            "mobile",
+            "app-version.json",
+          );
+          fs.writeFileSync(
+            appVersionPath,
+            `${JSON.stringify({ version }, null, 2)}\n`,
+            "utf8",
+          );
+          console.log(
+            `Resolved version=${version} release_tag=${releaseTag} wrote ${appVersionPath}`,
+          );
+          NODE
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Expo and EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android preview with EAS
+        id: eas_build
+        working-directory: apps/mobile
+        env:
+          APP_VERSION: ${{ steps.resolve.outputs.version }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Wait for the cloud build so we can collect final artifact URLs.
+          eas build \
+            --platform android \
+            --profile preview \
+            --non-interactive \
+            --wait \
+            --json \
+            | tee eas-build-result.json
+
+      - name: Append EAS links to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+          APP_VERSION: ${{ steps.resolve.outputs.version }}
+        working-directory: apps/mobile
+        run: |
+          node ../../scripts/append-eas-links-to-release.mjs \
+            --tag "$RELEASE_TAG" \
+            --version "$APP_VERSION" \
+            --eas-json eas-build-result.json
