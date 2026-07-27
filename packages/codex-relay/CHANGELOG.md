@@ -1,5 +1,11 @@
 # codex-relay
 
+## 1.4.5
+
+### Patch Changes
+
+- d97247c: Merge upstream release pipeline and add Android EAS preview builds linked to GitHub releases
+
 ## 1.4.4
 
 ### Patch Changes
