@@ -61,18 +61,29 @@ const preferencesStore = createFileRuntimePreferencesStore(
   process.env.CODEX_RELAY_PREFERENCES_PATH ?? (await prepareCodexRelayDataPath("preferences.json")),
 );
 const appServerMode = resolveCodexAppServerMode();
-const sharedAppServer = appServerMode === "socket" ? new CodexAppServerClient() : undefined;
-if (sharedAppServer) {
-  await sharedAppServer.initialize();
-  process.once("SIGINT", () => stopSharedAppServer(130));
-  process.once("SIGTERM", () => stopSharedAppServer(143));
-  process.once("exit", () => sharedAppServer.close());
+const relayAppServer =
+  appServerMode.mode === "socket"
+    ? new CodexAppServerClient({
+        mode: appServerMode,
+        onStartupFallback: (error) => {
+          logRuntimeEvent(
+            "Fallback",
+            `Shared app-server unavailable; continuing with a private app-server (${error.message}).`,
+          );
+        },
+      })
+    : undefined;
+if (relayAppServer) {
+  await relayAppServer.initialize();
+  process.once("SIGINT", () => stopRelayAppServer(130));
+  process.once("SIGTERM", () => stopRelayAppServer(143));
+  process.once("exit", () => relayAppServer.close());
 }
 
 serve(
   {
     fetch: createApp({
-      appServer: sharedAppServer,
+      appServer: relayAppServer,
       pairing: {
         approvalSecret,
         dangerouslyAutoApprove,
@@ -167,14 +178,16 @@ serve(
         pairingPayload,
         port: info.port,
         sharedAppServerRemoteAddress:
-          appServerMode === "socket" ? resolveCodexSharedAppServerRemoteAddress() : undefined,
+          relayAppServer?.appServerMode === "socket"
+            ? resolveCodexSharedAppServerRemoteAddress()
+            : undefined,
       }),
     );
   },
 );
 
-function stopSharedAppServer(exitCode: number) {
-  sharedAppServer?.close();
+function stopRelayAppServer(exitCode: number) {
+  relayAppServer?.close();
   process.exit(exitCode);
 }
 
@@ -207,6 +220,7 @@ function formatStartupInstructions(details: {
     `${color.prompt("›")} Commands`,
     `  ${color.command(npxCommand)}              Start and print a pairing QR`,
     `  ${color.command(`${npxCommand} --bg`)}         Start in the background`,
+    `  ${color.command(`${npxCommand} stop`)}         Stop the background relay`,
     `  ${color.command(`${npxCommand} qr`)}           Print this QR again`,
     `  ${color.command(`${npxCommand} approve <code>`)} Approve a device`,
     "",

@@ -14,7 +14,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { CodexClient, CodexThread } from "../src/codex.js";
 import { createTursoPairingSessionStore } from "../src/pairing-store.js";
-import { createFileRuntimePreferencesStore } from "../src/preferences-store.js";
+import {
+  createFileRuntimePreferencesStore,
+  type RuntimePreferencesStore,
+} from "../src/preferences-store.js";
 import type { PushNotificationSender, RelayPushNotification } from "../src/push-notifications.js";
 import { createServerIdentity } from "../src/secure-transport.js";
 
@@ -1252,6 +1255,33 @@ describe("Codex Relay server routes", () => {
 
     for (const handler of notificationHandlers) {
       handler({
+        method: "item/completed",
+        params: {
+          item: {
+            agentsStates: {},
+            id: "spawn-agent",
+            model: null,
+            prompt: null,
+            reasoningEffort: null,
+            receiverThreadIds: ["agent-thread-1"],
+            senderThreadId: "thread-1",
+            status: "completed",
+            tool: "spawnAgent",
+            type: "collabAgentToolCall",
+          },
+          threadId: "thread-1",
+          turnId: "turn-1",
+        },
+      });
+      handler({
+        method: "turn/completed",
+        params: { status: "completed", threadId: "agent-thread-1", turnId: "agent-turn-1" },
+      });
+      handler({
+        method: "turn/completed",
+        params: { status: "completed", threadId: "agent-thread-1", turnId: "agent-turn-1" },
+      });
+      handler({
         method: "turn/completed",
         params: { status: "completed", threadId: "thread-1", turnId: "turn-1" },
       });
@@ -1896,6 +1926,9 @@ describe("Codex Relay server routes", () => {
   it("attaches to an already-running empty app-server thread", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const notificationHandlers = new Set<(notification: unknown) => void>();
+    const requestHandlers = new Set<(request: unknown) => void>();
+    const cleanupNotificationHandler = vi.fn<() => void>();
+    const cleanupRequestHandler = vi.fn<() => void>();
     const now = Date.now() / 1000;
     const appThread = {
       id: "app-thread-empty-stream",
@@ -1912,10 +1945,17 @@ describe("Codex Relay server routes", () => {
     const appServer = {
       onNotification(handler: (notification: unknown) => void) {
         notificationHandlers.add(handler);
-        return () => notificationHandlers.delete(handler);
+        return () => {
+          cleanupNotificationHandler();
+          notificationHandlers.delete(handler);
+        };
       },
-      onRequest() {
-        return () => undefined;
+      onRequest(handler: (request: unknown) => void) {
+        requestHandlers.add(handler);
+        return () => {
+          cleanupRequestHandler();
+          requestHandlers.delete(handler);
+        };
       },
       readThread: vi.fn<() => Promise<unknown>>(async () => {
         queueMicrotask(() => {
@@ -1946,6 +1986,190 @@ describe("Codex Relay server routes", () => {
     expect(appServer.readThread).toHaveBeenCalled();
     expect(body).toContain('"state":"running"');
     expect(body).toContain('"state":"idle"');
+    expect(notificationHandlers).toHaveLength(0);
+    expect(requestHandlers).toHaveLength(0);
+    expect(cleanupNotificationHandler).toHaveBeenCalledTimes(1);
+    expect(cleanupRequestHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not accumulate preview probes or app-server handlers across cancelled attachments", async () => {
+    vi.useFakeTimers();
+    const previousPreviewPorts = process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
+    process.env.CODEX_RELAY_WEB_PREVIEW_PORTS = "65534";
+    const probeSignals: AbortSignal[] = [];
+    const fetchPreview = vi.fn<typeof fetch>(async (_input, init) => {
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("Expected preview probe to include an AbortSignal.");
+      }
+      probeSignals.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    vi.stubGlobal("fetch", fetchPreview);
+
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const notificationHandlers = new Set<(notification: unknown) => void>();
+    const requestHandlers = new Set<(request: unknown) => void>();
+    const cleanupNotificationHandler = vi.fn<() => void>();
+    const cleanupRequestHandler = vi.fn<() => void>();
+    const now = Date.now() / 1000;
+    const appThread = {
+      id: "app-thread-cancelled-stream",
+      createdAt: now,
+      cwd: workspacePath,
+      modelProvider: "gpt-5.5",
+      name: "Cancelled stream",
+      preview: "Cancelled stream",
+      source: "app",
+      status: { type: "active" },
+      turns: [],
+      updatedAt: now,
+    };
+    const appServer = {
+      onNotification(handler: (notification: unknown) => void) {
+        notificationHandlers.add(handler);
+        return () => {
+          cleanupNotificationHandler();
+          notificationHandlers.delete(handler);
+        };
+      },
+      onRequest(handler: (request: unknown) => void) {
+        requestHandlers.add(handler);
+        return () => {
+          cleanupRequestHandler();
+          requestHandlers.delete(handler);
+        };
+      },
+      readThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+    try {
+      for (let attachment = 1; attachment <= 3; attachment += 1) {
+        const response = await app.request("/v1/threads/app-thread-cancelled-stream/runs/stream", {
+          method: "POST",
+          body: JSON.stringify({}),
+          headers: { "content-type": "application/json" },
+        });
+        reader = response.body?.getReader();
+        expect(reader).toBeDefined();
+        await reader!.read();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(fetchPreview).toHaveBeenCalledTimes(attachment);
+        expect(notificationHandlers).toHaveLength(1);
+        expect(requestHandlers).toHaveLength(1);
+
+        await reader!.cancel("test cancellation");
+        reader = undefined;
+
+        expect(probeSignals[attachment - 1]?.aborted).toBe(true);
+        await vi.advanceTimersByTimeAsync(4500);
+        expect(fetchPreview).toHaveBeenCalledTimes(attachment);
+        expect(notificationHandlers).toHaveLength(0);
+        expect(requestHandlers).toHaveLength(0);
+        expect(cleanupNotificationHandler).toHaveBeenCalledTimes(attachment);
+        expect(cleanupRequestHandler).toHaveBeenCalledTimes(attachment);
+      }
+    } finally {
+      await reader?.cancel().catch(() => undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      if (previousPreviewPorts === undefined) {
+        delete process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
+      } else {
+        process.env.CODEX_RELAY_WEB_PREVIEW_PORTS = previousPreviewPorts;
+      }
+    }
+  });
+
+  it("stops scanning after detecting the first configured web preview target", async () => {
+    vi.useFakeTimers();
+    const previousPreviewPorts = process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
+    process.env.CODEX_RELAY_WEB_PREVIEW_PORTS = "65533,65534";
+    const fetchPreview = vi.fn<typeof fetch>(
+      async () =>
+        new Response("<!doctype html><html><title>Preview</title></html>", {
+          headers: { "content-type": "text/html" },
+          status: 200,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchPreview);
+
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const notificationHandlers = new Set<(notification: unknown) => void>();
+    const requestHandlers = new Set<(request: unknown) => void>();
+    const now = Date.now() / 1000;
+    const appThread = {
+      id: "app-thread-preview-detected",
+      createdAt: now,
+      cwd: workspacePath,
+      modelProvider: "gpt-5.5",
+      name: "Preview detected",
+      preview: "Preview detected",
+      source: "app",
+      status: { type: "active" },
+      turns: [],
+      updatedAt: now,
+    };
+    const appServer = {
+      onNotification(handler: (notification: unknown) => void) {
+        notificationHandlers.add(handler);
+        return () => notificationHandlers.delete(handler);
+      },
+      onRequest(handler: (request: unknown) => void) {
+        requestHandlers.add(handler);
+        return () => requestHandlers.delete(handler);
+      },
+      readThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+    try {
+      const response = await app.request("/v1/threads/app-thread-preview-detected/runs/stream", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "content-type": "application/json" },
+      });
+      reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const decoder = new TextDecoder();
+      let streamedText = "";
+      for (let reads = 0; reads < 6 && !streamedText.includes('"port":65533'); reads += 1) {
+        const result = await reader!.read();
+        expect(result.done).toBe(false);
+        streamedText += decoder.decode(result.value, { stream: true });
+      }
+
+      expect(streamedText).toContain('"port":65533');
+      expect(streamedText.match(/"type":"thread\.preview_target\.detected"/g)).toHaveLength(1);
+      expect(fetchPreview).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(fetchPreview).toHaveBeenCalledTimes(2);
+    } finally {
+      await reader?.cancel().catch(() => undefined);
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      if (previousPreviewPorts === undefined) {
+        delete process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
+      } else {
+        process.env.CODEX_RELAY_WEB_PREVIEW_PORTS = previousPreviewPorts;
+      }
+    }
   });
 
   it("keeps attached running app-server streams alive through transient idle status", async () => {
@@ -5338,6 +5562,121 @@ describe("Codex Relay server routes", () => {
     expect(body).toContain('"id":"app-thread-stale"');
   });
 
+  it("hands off queued input when the active turn completes during input submission", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const notificationHandlers = new Set<(notification: unknown) => void>();
+    let delayQueuedPreferenceRead = false;
+    let releaseQueuedPreferenceRead: (() => void) | undefined;
+    const queuedPreferenceRead = new Promise<void>((resolve) => {
+      releaseQueuedPreferenceRead = resolve;
+    });
+    let signalQueuedPreferenceRead: (() => void) | undefined;
+    const queuedPreferenceReadStarted = new Promise<void>((resolve) => {
+      signalQueuedPreferenceRead = resolve;
+    });
+    const preferences: RuntimePreferencesStore = {
+      async read() {
+        if (delayQueuedPreferenceRead) {
+          signalQueuedPreferenceRead?.();
+          await queuedPreferenceRead;
+        }
+        return { runtimeMode: "default" };
+      },
+      async readByWorkspacePath() {
+        return {};
+      },
+      async update() {
+        return { runtimeMode: "default" };
+      },
+    };
+    const now = Date.now() / 1000;
+    let turnCount = 0;
+    const startTurn = vi.fn<(params: unknown) => Promise<unknown>>(async () => {
+      turnCount += 1;
+      return {
+        id: `turn-queue-race-${turnCount}`,
+        items: [],
+        status: "running",
+        startedAt: null,
+        completedAt: null,
+      };
+    });
+    const appServer = {
+      onNotification(handler: (notification: unknown) => void) {
+        notificationHandlers.add(handler);
+        return () => notificationHandlers.delete(handler);
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      startThread: vi.fn<() => Promise<unknown>>(async () => ({
+        id: "app-thread-queue-race",
+        createdAt: now,
+        cwd: workspacePath,
+        modelProvider: "gpt-5.5",
+        name: "Queue race",
+        preview: "Queue race",
+        source: "app",
+        status: "idle",
+        turns: [],
+        updatedAt: now,
+      })),
+      startTurn,
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      preferences,
+      workspacePath,
+    });
+
+    await app.request("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ title: "Queue race" }),
+      headers: { "content-type": "application/json" },
+    });
+    const streamResponse = await app.request("/v1/threads/app-thread-queue-race/runs/stream", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Initial run" }),
+      headers: { "content-type": "application/json" },
+    });
+    await waitUntil(() => expect(startTurn).toHaveBeenCalledTimes(1));
+
+    delayQueuedPreferenceRead = true;
+    const queuedResponse = app.request("/v1/threads/app-thread-queue-race/input", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Queued after completion" }),
+      headers: { "content-type": "application/json" },
+    });
+    await queuedPreferenceReadStarted;
+    for (const handler of notificationHandlers) {
+      handler({
+        method: "turn/completed",
+        params: {
+          status: "completed",
+          threadId: "app-thread-queue-race",
+          turnId: "turn-queue-race-1",
+        },
+      });
+    }
+    releaseQueuedPreferenceRead?.();
+
+    await expect(queuedResponse).resolves.toHaveProperty("status", 202);
+    await waitUntil(() => expect(startTurn).toHaveBeenCalledTimes(2));
+
+    for (const handler of notificationHandlers) {
+      handler({
+        method: "turn/completed",
+        params: {
+          status: "completed",
+          threadId: "app-thread-queue-race",
+          turnId: "turn-queue-race-2",
+        },
+      });
+    }
+    expect(await streamResponse.text()).toContain("thread.state.changed");
+  });
+
   it("queues additional running-thread input on the server", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const notificationHandlers = new Set<(notification: unknown) => void>();
@@ -5451,9 +5790,9 @@ describe("Codex Relay server routes", () => {
         params: { status: "completed", threadId: "app-thread-queue", turnId: "turn-1" },
       });
     }
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-
-    expect(startTurn).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => {
+      expect(startTurn).toHaveBeenCalledTimes(2);
+    });
     expect(startTurn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
@@ -5476,9 +5815,9 @@ describe("Codex Relay server routes", () => {
         params: { status: "completed", threadId: "app-thread-queue", turnId: "turn-2" },
       });
     }
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-
-    expect(startTurn).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => {
+      expect(startTurn).toHaveBeenCalledTimes(3);
+    });
 
     for (const handler of notificationHandlers) {
       handler({

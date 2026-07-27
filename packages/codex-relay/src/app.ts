@@ -325,13 +325,32 @@ export function createApp(options: AppOptions = {}) {
   const pendingApprovals = new Map<string, PendingApproval>();
   const resolvedApprovals = new Map<string, ResolvedApproval>();
   const queuedInputsByThreadId = new Map<string, QueuedThreadInput[]>();
+  const threadOperationTails = new Map<string, Promise<void>>();
   const workspaceTerminalSessions = new Map<string, WorkspaceTerminalSession>();
   const activeAppServerTurnIdsByThreadId = new Map<string, string>();
   const appServerHistoryLoadsByThreadId = new Map<string, Promise<void>>();
   const steeringThreads = new Set<string>();
   const secureSessionsByTokenHash = new Map<string, SecureSession>();
-  const activeStreamControllers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  const activeStreamControllers = new Map<
+    ReadableStreamDefaultController<Uint8Array>,
+    () => void
+  >();
   const threadOptions = { workingDirectory: workspacePath };
+  function runThreadOperation<T>(threadId: string, operation: () => Promise<T>) {
+    const previous = threadOperationTails.get(threadId) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    threadOperationTails.set(threadId, tail);
+    void tail.finally(() => {
+      if (threadOperationTails.get(threadId) === tail) {
+        threadOperationTails.delete(threadId);
+      }
+    });
+    return result;
+  }
   const pushNotificationDispatcher = options.pairing
     ? createPushNotificationDispatcher({
         sender: options.pushNotificationSender ?? createExpoPushNotificationSender(),
@@ -1180,7 +1199,7 @@ export function createApp(options: AppOptions = {}) {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         streamController = controller;
-        activeStreamControllers.add(controller);
+        activeStreamControllers.set(controller, closeStream);
         send(workspaceTerminalOutputResponse(session, since));
         if (session.exitedAt) {
           return;
@@ -1635,7 +1654,9 @@ export function createApp(options: AppOptions = {}) {
       try {
         const appServerThreads = await appServer.listThreads();
         const response: ListThreadsResponse = ListThreadsResponseSchema.parse({
-          threads: appServerThreads.map((thread) => rememberAppServerThread(threads, thread)),
+          threads: appServerThreads
+            .filter((thread) => !isSubagentThread(thread))
+            .map((thread) => rememberAppServerThread(threads, thread)),
           source: "app-server",
         });
         return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
@@ -1666,7 +1687,9 @@ export function createApp(options: AppOptions = {}) {
         const appServerThreads = await appServer.listThreads();
         const response: ArchiveThreadResponse = ArchiveThreadResponseSchema.parse({
           archivedThreadId: threadId,
-          threads: appServerThreads.map((thread) => rememberAppServerThread(threads, thread)),
+          threads: appServerThreads
+            .filter((thread) => !isSubagentThread(thread))
+            .map((thread) => rememberAppServerThread(threads, thread)),
           source: "app-server",
         });
         return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
@@ -1713,6 +1736,15 @@ export function createApp(options: AppOptions = {}) {
       threadId,
     });
     const knownThread = threads.get(threadId);
+    if (knownThread && isSubagentThread(knownThread)) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("not_found", `Thread ${threadId} is not known to this server.`),
+        404,
+      );
+    }
     const wasKnownRunning =
       knownThread?.state === "running" || activeAppServerTurnIdsByThreadId.has(threadId);
     if (appServer) {
@@ -1720,6 +1752,15 @@ export function createApp(options: AppOptions = {}) {
         const thread = await appServer.readThread(threadId, {
           includeTurns: false,
         });
+        if (isSubagentThread(thread)) {
+          return secureJson(
+            c,
+            options.pairing,
+            secureSessionsByTokenHash,
+            apiError("not_found", `Thread ${threadId} is not known to this server.`),
+            404,
+          );
+        }
         const mappedThread = rememberAppServerThread(threads, thread);
         const cachedMessages = messagesByThreadId.get(threadId) ?? [];
         let loadedMessages = false;
@@ -2332,87 +2373,89 @@ export function createApp(options: AppOptions = {}) {
 
   app.post("/v1/threads/:threadId/input", async (c) => {
     const threadId = c.req.param("threadId");
-    const knownThread = await ensureKnownThread({
-      appServer,
-      threadId,
-      messagesByThreadId,
-      threads,
-    });
-    if (!knownThread) {
-      return secureJson(
-        c,
-        options.pairing,
-        secureSessionsByTokenHash,
-        apiError("not_found", `Thread ${threadId} is not known to this server.`),
-        404,
-      );
-    }
-    if (!appServer) {
-      return secureJson(
-        c,
-        options.pairing,
-        secureSessionsByTokenHash,
-        apiError("unsupported", "Running-thread input requires the Codex app-server."),
-        409,
-      );
-    }
-    if (knownThread.state !== "running") {
-      return secureJson(
-        c,
-        options.pairing,
-        secureSessionsByTokenHash,
-        apiError("thread_not_running", `Thread ${threadId} is not currently running.`),
-        409,
-      );
-    }
+    return runThreadOperation(threadId, async () => {
+      const knownThread = await ensureKnownThread({
+        appServer,
+        threadId,
+        messagesByThreadId,
+        threads,
+      });
+      if (!knownThread) {
+        return secureJson(
+          c,
+          options.pairing,
+          secureSessionsByTokenHash,
+          apiError("not_found", `Thread ${threadId} is not known to this server.`),
+          404,
+        );
+      }
+      if (!appServer) {
+        return secureJson(
+          c,
+          options.pairing,
+          secureSessionsByTokenHash,
+          apiError("unsupported", "Running-thread input requires the Codex app-server."),
+          409,
+        );
+      }
+      if (knownThread.state !== "running") {
+        return secureJson(
+          c,
+          options.pairing,
+          secureSessionsByTokenHash,
+          apiError("thread_not_running", `Thread ${threadId} is not currently running.`),
+          409,
+        );
+      }
 
-    const parsed = await parseRequestJson(
-      c,
-      options.pairing,
-      secureSessionsByTokenHash,
-      RunThreadRequestSchema,
-    );
-    if (!parsed.success) {
-      return secureJson(
+      const parsed = await parseRequestJson(
         c,
         options.pairing,
         secureSessionsByTokenHash,
-        validationError(parsed.error),
-        400,
+        RunThreadRequestSchema,
       );
-    }
+      if (!parsed.success) {
+        return secureJson(
+          c,
+          options.pairing,
+          secureSessionsByTokenHash,
+          validationError(parsed.error),
+          400,
+        );
+      }
 
-    const runOptions = withRuntimePreferences(
-      await preferences.read(knownThread.cwd ?? workspacePath),
-      parsed.data,
-    );
-    const skills = runOptions.skills ?? [];
-    const prompt = runOptions.prompt;
-    const queuedInputs = queuedInputsByThreadId.get(threadId) ?? [];
-    const queuedInput: QueuedThreadInput = {
-      attachments: runOptions.attachments ?? [],
-      id: randomUUID(),
-      prompt,
-      runOptions,
-      skills,
-      workspacePath: knownThread.cwd ?? workspacePath,
-    };
-    queuedInputs.push(queuedInput);
-    queuedInputsByThreadId.set(threadId, queuedInputs);
+      const runOptions = withRuntimePreferences(
+        await preferences.read(knownThread.cwd ?? workspacePath),
+        parsed.data,
+      );
+      const skills = runOptions.skills ?? [];
+      const prompt = runOptions.prompt;
+      const queuedInputs = queuedInputsByThreadId.get(threadId) ?? [];
+      const queuedInput: QueuedThreadInput = {
+        attachments: runOptions.attachments ?? [],
+        id: randomUUID(),
+        prompt,
+        runOptions,
+        skills,
+        workspacePath: knownThread.cwd ?? workspacePath,
+      };
+      queuedInputs.push(queuedInput);
+      queuedInputsByThreadId.set(threadId, queuedInputs);
 
-    const thread = updateThread(threads, messagesByThreadId, threadId, {
-      state: "running",
-      lastPrompt: promptWithAttachmentReferences(prompt, runOptions.attachments ?? []),
-      lastError: undefined,
-      ...runtimeMetadataFromOptions(runOptions),
+      const thread = updateThread(threads, messagesByThreadId, threadId, {
+        state: "running",
+        lastPrompt: promptWithAttachmentReferences(prompt, runOptions.attachments ?? []),
+        lastError: undefined,
+        ...runtimeMetadataFromOptions(runOptions),
+      });
+      const response: SubmitThreadInputResponse = SubmitThreadInputResponseSchema.parse({
+        acceptedAs: "queued",
+        input: queuedThreadInputSummary(queuedInput),
+        queueLength: queuedInputsByThreadId.get(threadId)?.length ?? 0,
+        thread,
+      });
+      return secureJson(c, options.pairing, secureSessionsByTokenHash, response, 202);
     });
-    const response: SubmitThreadInputResponse = SubmitThreadInputResponseSchema.parse({
-      acceptedAs: "queued",
-      input: queuedThreadInputSummary(queuedInput),
-      queueLength: queuedInputsByThreadId.get(threadId)?.length ?? 0,
-      thread,
-    });
-    return secureJson(c, options.pairing, secureSessionsByTokenHash, response, 202);
   });
 
   app.delete("/v1/threads/:threadId/input/:inputId", async (c) => {
@@ -2667,20 +2710,32 @@ export function createApp(options: AppOptions = {}) {
     });
     const encoder = new TextEncoder();
     const secureSession = getSecureSessionForRequest(c, options.pairing, secureSessionsByTokenHash);
-    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
     let streamSettled = false;
+    let closeStream = () => {};
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        streamController = controller;
-        activeStreamControllers.add(controller);
+        const attachmentAbortController = new AbortController();
+        let closed = false;
+        let stopPreviewMonitor = () => {};
+        closeStream = () => {
+          if (closed) {
+            return;
+          }
+          closed = true;
+          stopPreviewMonitor();
+          attachmentAbortController.abort();
+          activeStreamControllers.delete(controller);
+          closeSseController(controller);
+        };
+        activeStreamControllers.set(controller, closeStream);
         relayDebugLog("thread.stream.started", {
           mode: !runOptions.prompt && appServer ? "attach" : "run",
           threadId,
         });
-        const stopPreviewMonitor = startWebPreviewTargetMonitor({
+        stopPreviewMonitor = startWebPreviewTargetMonitor({
           bridgeUrl: c.req.url,
           send(target) {
-            sendSse(controller, encoder, secureSession, {
+            return sendSse(controller, encoder, secureSession, {
               type: "thread.preview_target.detected",
               threadId,
               target,
@@ -2695,13 +2750,13 @@ export function createApp(options: AppOptions = {}) {
             messagesByThreadId,
             pendingApprovals,
             secureSession,
+            signal: attachmentAbortController.signal,
             threadId,
             threads,
           }).finally(() => {
             streamSettled = true;
             relayDebugLog("thread.stream.finished", { mode: "attach", threadId });
-            activeStreamControllers.delete(controller);
-            stopPreviewMonitor();
+            closeStream();
           });
           return;
         }
@@ -2715,11 +2770,9 @@ export function createApp(options: AppOptions = {}) {
               "Running-thread stream attachment requires the Codex app-server.",
             ).error,
           });
-          closeSseController(controller);
           streamSettled = true;
           relayDebugLog("thread.stream.finished", { mode: "unsupported", threadId });
-          activeStreamControllers.delete(controller);
-          stopPreviewMonitor();
+          closeStream();
           return;
         }
         const skills = runOptions.skills ?? [];
@@ -2734,6 +2787,7 @@ export function createApp(options: AppOptions = {}) {
           messagesByThreadId,
           pendingApprovals,
           queuedInputsByThreadId,
+          runThreadOperation,
           prompt,
           attachments: runOptions.attachments ?? [],
           secureSession,
@@ -2746,14 +2800,11 @@ export function createApp(options: AppOptions = {}) {
         }).finally(() => {
           streamSettled = true;
           relayDebugLog("thread.stream.finished", { mode: "run", threadId });
-          activeStreamControllers.delete(controller);
-          stopPreviewMonitor();
+          closeStream();
         });
       },
       cancel(reason) {
-        if (streamController) {
-          activeStreamControllers.delete(streamController);
-        }
+        closeStream();
         relayDebugLog("thread.stream.cancelled_by_client", {
           reason: debugReason(reason),
           settled: streamSettled,
@@ -3044,6 +3095,7 @@ async function runPromptStreamed(input: {
   messagesByThreadId: Map<string, ChatMessage[]>;
   pendingApprovals: Map<string, PendingApproval>;
   queuedInputsByThreadId: Map<string, QueuedThreadInput[]>;
+  runThreadOperation: <T>(threadId: string, operation: () => Promise<T>) => Promise<T>;
   prompt: string;
   secureSession?: SecureSessionHandle;
   steeringThreads: Set<string>;
@@ -3071,6 +3123,7 @@ async function runPromptStreamed(input: {
       messagesByThreadId: input.messagesByThreadId,
       pendingApprovals: input.pendingApprovals,
       queuedInputsByThreadId: input.queuedInputsByThreadId,
+      runThreadOperation: input.runThreadOperation,
       prompt: input.prompt,
       runOptions: input.runOptions,
       secureSession: input.secureSession,
@@ -3278,8 +3331,6 @@ async function runPromptStreamed(input: {
       thread: threadSummary,
       error: errorBody.error,
     });
-  } finally {
-    closeSseController(input.controller);
   }
 }
 
@@ -3423,6 +3474,7 @@ async function streamRunningAppServerThread(input: {
   messagesByThreadId: Map<string, ChatMessage[]>;
   pendingApprovals: Map<string, PendingApproval>;
   secureSession?: SecureSessionHandle;
+  signal: AbortSignal;
   threadId: string;
   threads: Map<string, ThreadMetadata>;
 }) {
@@ -3432,8 +3484,20 @@ async function streamRunningAppServerThread(input: {
   let observedTurnActivity = false;
   let producedTurnOutput = false;
   let threadSummary = input.threads.get(input.threadId);
+  let cleanupNotificationHandler = (): void => undefined;
+  let cleanupRequestHandler = (): void => undefined;
+  let handlersCleaned = false;
 
-  const cleanupRequestHandler = input.appServer.onRequest((request) => {
+  const cleanupHandlers = () => {
+    if (handlersCleaned) {
+      return;
+    }
+    handlersCleaned = true;
+    cleanupRequestHandler();
+    cleanupNotificationHandler();
+  };
+
+  cleanupRequestHandler = input.appServer.onRequest((request) => {
     if (!isApprovalServerRequest(request.method)) {
       void input.appServer.rejectRequest(
         request.id,
@@ -3499,8 +3563,20 @@ async function streamRunningAppServerThread(input: {
     });
   });
 
-  let cleanupNotificationHandler = (): void => undefined;
   const completed = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupHandlers();
+      if (error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
+    };
     cleanupNotificationHandler = input.appServer.onNotification((notification) => {
       const params = recordParams(notification);
       const notificationThreadId = firstString(params, ["threadId"]);
@@ -3523,8 +3599,7 @@ async function streamRunningAppServerThread(input: {
               thread: threadSummary,
             });
             if (state !== "running") {
-              cleanupNotificationHandler();
-              resolve();
+              finish();
             }
             return;
           }
@@ -3668,8 +3743,7 @@ async function streamRunningAppServerThread(input: {
                 threadId: input.threadId,
                 threads: input.threads,
               });
-              cleanupNotificationHandler();
-              resolve();
+              finish();
               return;
             }
             if (assistantMessageId) {
@@ -3715,22 +3789,37 @@ async function streamRunningAppServerThread(input: {
                 error: errorBody.error,
               });
             }
-            cleanupNotificationHandler();
-            resolve();
+            finish();
             return;
           }
         }
       } catch (error) {
-        cleanupNotificationHandler();
-        reject(error);
+        finish(error);
       }
     });
   });
+  let removeAbortListener = () => {};
+  const aborted = new Promise<void>((resolve) => {
+    const onAbort = () => {
+      cleanupHandlers();
+      resolve();
+    };
+    if (input.signal.aborted) {
+      onAbort();
+      return;
+    }
+    input.signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => input.signal.removeEventListener("abort", onAbort);
+  });
 
   try {
-    const appServerThread = await input.appServer.readThread(input.threadId, {
-      includeTurns: false,
-    });
+    const appServerThread = await Promise.race([
+      input.appServer.readThread(input.threadId, { includeTurns: false }),
+      aborted.then(() => undefined),
+    ]);
+    if (!appServerThread || input.signal.aborted) {
+      return;
+    }
     threadSummary = rememberAppServerThread(input.threads, appServerThread);
     sendSse(input.controller, input.encoder, input.secureSession, {
       type: "thread.state.changed",
@@ -3739,8 +3828,11 @@ async function streamRunningAppServerThread(input: {
     if (threadSummary.state !== "running") {
       return;
     }
-    await completed;
+    await Promise.race([completed, aborted]);
   } catch (error) {
+    if (input.signal.aborted) {
+      return;
+    }
     threadSummary = updateThread(input.threads, input.messagesByThreadId, input.threadId, {
       state: "failed",
       lastError: errorMessage(error),
@@ -3751,9 +3843,8 @@ async function streamRunningAppServerThread(input: {
       error: apiError("codex_run_failed", threadSummary.lastError ?? "Codex run failed.").error,
     });
   } finally {
-    cleanupRequestHandler();
-    cleanupNotificationHandler();
-    closeSseController(input.controller);
+    removeAbortListener();
+    cleanupHandlers();
   }
 }
 
@@ -3766,6 +3857,7 @@ async function runAppServerPromptStreamed(input: {
   messagesByThreadId: Map<string, ChatMessage[]>;
   pendingApprovals: Map<string, PendingApproval>;
   queuedInputsByThreadId: Map<string, QueuedThreadInput[]>;
+  runThreadOperation: <T>(threadId: string, operation: () => Promise<T>) => Promise<T>;
   prompt: string;
   runOptions: {
     model?: string;
@@ -4243,12 +4335,19 @@ async function runAppServerPromptStreamed(input: {
             const state = terminalTurnState(notification.method, params);
             const terminalTurnId =
               firstString(params, ["turnId"]) ?? turnIdFromParams(params) ?? activeTurnId;
-            finishTerminalTurn({
-              lastError: state === "failed" ? turnErrorMessage(params) : undefined,
-              method: notification.method,
-              state,
-              turnId: terminalTurnId,
-            });
+            void input
+              .runThreadOperation(activeThreadId, async () => {
+                finishTerminalTurn({
+                  lastError: state === "failed" ? turnErrorMessage(params) : undefined,
+                  method: notification.method,
+                  state,
+                  turnId: terminalTurnId,
+                });
+              })
+              .catch((error: unknown) => {
+                cleanupNotificationHandler();
+                rejectCompleted(error);
+              });
             return;
           }
         }
@@ -4398,7 +4497,6 @@ async function runAppServerPromptStreamed(input: {
       input.activeAppServerTurnIdsByThreadId.delete(activeThreadId);
       input.steeringThreads.delete(activeThreadId);
     }
-    closeSseController(input.controller);
   }
 }
 
@@ -4690,7 +4788,9 @@ function createSecureSessionHandle(
 }
 
 function sortedThreads(threads: Map<string, ThreadMetadata>) {
-  return [...threads.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...threads.values()]
+    .filter((thread) => !isSubagentThread(thread))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 async function ensureKnownThread(input: {
@@ -4701,7 +4801,7 @@ async function ensureKnownThread(input: {
 }) {
   const knownThread = input.threads.get(input.threadId);
   if (knownThread) {
-    return knownThread;
+    return isSubagentThread(knownThread) ? undefined : knownThread;
   }
 
   if (!input.appServer) {
@@ -4712,6 +4812,9 @@ async function ensureKnownThread(input: {
     const appServerThread = await input.appServer.readThread(input.threadId, {
       includeTurns: false,
     });
+    if (isSubagentThread(appServerThread)) {
+      return undefined;
+    }
     const thread = rememberAppServerThread(input.threads, appServerThread);
     return thread;
   } catch {
@@ -5382,7 +5485,7 @@ function sendSse(
   encoder: TextEncoder,
   secureSession: SecureSessionHandle | undefined,
   event: StreamThreadRunEvent,
-) {
+): boolean {
   const parsed = StreamThreadRunEventSchema.parse(event);
   const threadId = threadIdFromStreamEvent(parsed);
   relayDebugLog("thread.stream.sse", {
@@ -5403,7 +5506,7 @@ function sendSse(
       stage: "event",
       threadId,
     });
-    return;
+    return false;
   }
   if (!enqueueSseChunk(controller, encoder.encode(`data: ${JSON.stringify(data)}\n\n`))) {
     relayDebugLog("thread.stream.sse.enqueue_failed", {
@@ -5411,7 +5514,9 @@ function sendSse(
       stage: "data",
       threadId,
     });
+    return false;
   }
+  return true;
 }
 
 function sendTerminalOutputSse(
@@ -5471,10 +5576,10 @@ function closeSseController(controller: ReadableStreamDefaultController<Uint8Arr
 }
 
 function closeActiveStreamControllers(
-  controllers: Set<ReadableStreamDefaultController<Uint8Array>>,
+  controllers: Map<ReadableStreamDefaultController<Uint8Array>, () => void>,
 ) {
-  for (const controller of controllers) {
-    closeSseController(controller);
+  for (const closeStream of controllers.values()) {
+    closeStream();
   }
   controllers.clear();
 }
@@ -5492,40 +5597,52 @@ function startWebPreviewTargetMonitor({
   send,
 }: {
   bridgeUrl: string;
-  send: (target: WebPreviewTarget) => void;
+  send: (target: WebPreviewTarget) => boolean;
 }) {
   const urls = webPreviewCandidateUrls(bridgeUrl);
-  const seenUrls = new Set<string>();
+  const abortController = new AbortController();
   let stopped = false;
+  let nextScan: ReturnType<typeof setTimeout> | undefined;
+
+  const stop = () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    abortController.abort();
+    if (nextScan) {
+      clearTimeout(nextScan);
+      nextScan = undefined;
+    }
+  };
 
   async function scan() {
     if (stopped) {
       return;
     }
 
-    const targets = await detectWebPreviewTargets(urls);
-    for (const target of targets) {
-      if (stopped || seenUrls.has(target.url)) {
-        continue;
-      }
-
-      seenUrls.add(target.url);
+    const target = await detectWebPreviewTarget(urls, abortController.signal);
+    if (stopped) {
+      return;
+    }
+    if (target) {
+      stop();
       try {
         send(target);
       } catch {
-        stopped = true;
-        return;
+        // The stream may have closed between detection and delivery.
       }
+      return;
     }
+
+    nextScan = setTimeout(() => {
+      nextScan = undefined;
+      void scan();
+    }, 1500);
   }
 
   void scan();
-  const interval = setInterval(() => void scan(), 1500);
-
-  return () => {
-    stopped = true;
-    clearInterval(interval);
-  };
+  return stop;
 }
 
 function webPreviewCandidateUrls(bridgeUrl: string) {
@@ -5562,13 +5679,22 @@ function readCollaborationModeTemplate(name: (typeof collaborationModeTemplateNa
     .trim();
 }
 
-async function detectWebPreviewTargets(urls: string[]) {
-  const targets = await Promise.all(urls.map((url) => probeWebPreviewTarget(url)));
-  return targets.filter((target): target is WebPreviewTarget => Boolean(target));
+async function detectWebPreviewTarget(urls: string[], signal: AbortSignal) {
+  const targets = await Promise.all(urls.map((url) => probeWebPreviewTarget(url, signal)));
+  return targets.find((target): target is WebPreviewTarget => Boolean(target));
 }
 
-async function probeWebPreviewTarget(url: string): Promise<WebPreviewTarget | undefined> {
+async function probeWebPreviewTarget(
+  url: string,
+  signal: AbortSignal,
+): Promise<WebPreviewTarget | undefined> {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal.aborted) {
+    abort();
+  } else {
+    signal.addEventListener("abort", abort, { once: true });
+  }
   const timeout = setTimeout(() => controller.abort(), 700);
 
   try {
@@ -5596,6 +5722,7 @@ async function probeWebPreviewTarget(url: string): Promise<WebPreviewTarget | un
     return undefined;
   } finally {
     clearTimeout(timeout);
+    signal.removeEventListener("abort", abort);
   }
 }
 
@@ -5873,6 +6000,7 @@ function mapAppServerThread(
   const mappedState = mapAppServerThreadState(thread.status, thread.turns);
   return ThreadSummarySchema.parse({
     id: thread.id,
+    parentThreadId: thread.parentThreadId ?? undefined,
     title: thread.name ?? preview(thread.preview || "Untitled thread"),
     createdAt,
     updatedAt,
@@ -5896,6 +6024,10 @@ function rememberAppServerThread(threads: Map<string, ThreadMetadata>, thread: A
   });
   threads.set(threadWithLocalRuntime.id, threadWithLocalRuntime);
   return threadWithLocalRuntime;
+}
+
+function isSubagentThread(thread: { readonly parentThreadId?: string | null }) {
+  return Boolean(thread.parentThreadId);
 }
 
 function mapAppServerThreadGoal(goal: AppServerThreadGoal | null): ThreadGoal | null {
@@ -7264,14 +7396,18 @@ function observeAppServerPushNotifications(
   dispatcher: PushNotificationDispatcher,
 ) {
   const dispatchedEventIds = new Set<string>();
-  const dispatch = (event: PushNotificationEvent, eventId: string) => {
-    if (dispatchedEventIds.has(eventId)) {
-      return;
-    }
+  const subagentThreadIds = new Set<string>();
+  const rememberEventId = (eventId: string) => {
     if (dispatchedEventIds.size >= 1000) {
       dispatchedEventIds.clear();
     }
     dispatchedEventIds.add(eventId);
+  };
+  const dispatch = (event: PushNotificationEvent, eventId: string) => {
+    if (dispatchedEventIds.has(eventId)) {
+      return;
+    }
+    rememberEventId(eventId);
     void dispatcher.dispatch(event).catch((error) => {
       relayDebugLog("push_notification.dispatch_failed", {
         error: errorMessage(error),
@@ -7283,11 +7419,17 @@ function observeAppServerPushNotifications(
   };
 
   appServer.onNotification((notification) => {
+    rememberSubagentThreadIds(notification, subagentThreadIds);
     const event = pushNotificationEventFromTerminalNotification(notification);
     if (!event) {
       return;
     }
-    dispatch(event, `${event.intent}:${event.threadId}:${event.turnId ?? ""}`);
+    const eventId = `${event.intent}:${event.threadId}:${event.turnId ?? ""}`;
+    if (subagentThreadIds.delete(event.threadId)) {
+      rememberEventId(eventId);
+      return;
+    }
+    dispatch(event, eventId);
   });
 
   appServer.onRequest((request) => {
@@ -7295,8 +7437,30 @@ function observeAppServerPushNotifications(
     if (!event) {
       return;
     }
-    dispatch(event, `${event.intent}:${event.threadId}:${event.turnId ?? ""}:${request.id}`);
+    const eventId = `${event.intent}:${event.threadId}:${event.turnId ?? ""}:${request.id}`;
+    if (subagentThreadIds.has(event.threadId)) {
+      rememberEventId(eventId);
+      return;
+    }
+    dispatch(event, eventId);
   });
+}
+
+function rememberSubagentThreadIds(
+  notification: AppServerNotification,
+  subagentThreadIds: Set<string>,
+) {
+  const item = objectRecord(recordParams(notification)?.item);
+  if (
+    item?.type !== "collabAgentToolCall" ||
+    !["spawnAgent", "sendInput", "resumeAgent"].includes(String(item.tool))
+  ) {
+    return;
+  }
+
+  for (const threadId of stringArray(item.receiverThreadIds)) {
+    subagentThreadIds.add(threadId);
+  }
 }
 
 function pushNotificationEventFromTerminalNotification(notification: AppServerNotification) {
