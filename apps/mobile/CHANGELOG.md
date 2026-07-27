@@ -1,6 +1,6 @@
 # @codex-relay/mobile
 
-## 1.4.0-ship.1
+## 1.4.0-ship.2
 
 ### Patch Changes
 
